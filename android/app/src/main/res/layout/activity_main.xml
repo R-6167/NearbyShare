@@ -168,6 +168,13 @@
                         android:text="Show my QR" />
 
                     <Button
+                        android:id="@+id/scanQrButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Scan QR" />
+
+                    <Button
                         android:id="@+id/applyQrButton"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
