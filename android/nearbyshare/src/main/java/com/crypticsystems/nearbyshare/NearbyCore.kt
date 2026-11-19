@@ -37,6 +37,10 @@ object NearbyCore {
 
         fun nearby_c_msg_encode_complete(sid: ByteArray, sidLen: Int, hash: ByteArray, out: ByteArray, outLen: Int): Int
 
+        fun nearby_c_msg_encode_cancel(
+            sid: ByteArray, sidLen: Int, reason: ByteArray?, reasonLen: Int, out: ByteArray, outLen: Int,
+        ): Int
+
         fun nearby_c_msg_tag(data: ByteArray, dataLen: Int): Int
 
         fun nearby_c_msg_parse_offer(
@@ -163,6 +167,18 @@ object NearbyCore {
         return readBytes { o, l -> lib().nearby_c_msg_encode_complete(sid, sid.size, hash32, o, l) }
     }
 
+    fun encodeCancel(sessionId: String, reason: String? = null): ByteArray {
+        val sid = sessionId.toByteArray(StandardCharsets.UTF_8)
+        val reasonBytes = reason?.toByteArray(StandardCharsets.UTF_8)
+        return readBytes { o, l ->
+            lib().nearby_c_msg_encode_cancel(
+                sid, sid.size,
+                reasonBytes, reasonBytes?.size ?: 0,
+                o, l,
+            )
+        }
+    }
+
     fun msgTag(data: ByteArray): Int = lib().nearby_c_msg_tag(data, data.size)
 
     data class OfferInfo(val sessionId: String, val fileName: String, val size: Long)
@@ -210,7 +226,6 @@ object NearbyCore {
         return out
     }
 
-    /** Streaming BLAKE3 hasher (does not keep payload in JVM heap beyond each update). */
     class Hasher internal constructor(private var handle: Long) : AutoCloseable {
         fun update(data: ByteArray, offset: Int = 0, length: Int = data.size) {
             require(handle > 0)
