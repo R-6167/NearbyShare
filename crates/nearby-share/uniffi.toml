@@ -1,0 +1,4 @@
+# UniFFI configuration (activated later)
+# [bindings.kotlin]
+# package_name = "com.mosescryptic.nearbyshare"
+# cdylib_name = "nearby_share"
