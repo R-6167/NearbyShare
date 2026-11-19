@@ -65,16 +65,23 @@ pub extern "C" fn nearby_c_msg_encode_response(
     session_id_ptr: *const u8,
     session_id_len: usize,
     accepted: i32,
+    reason_ptr: *const u8,
+    reason_len: usize,
     out: *mut u8,
     out_len: usize,
 ) -> i32 {
     let Some(session_id) = read_str(session_id_ptr, session_id_len) else {
         return -1;
     };
+    let reason = if reason_len == 0 || reason_ptr.is_null() {
+        None
+    } else {
+        read_str(reason_ptr, reason_len).filter(|s| !s.is_empty())
+    };
     let msg = Message::Response {
         session_id,
         accepted: accepted != 0,
-        reason: None,
+        reason,
     };
     write_bytes(out, out_len, &msg.encode())
 }
@@ -136,7 +143,6 @@ pub extern "C" fn nearby_c_msg_encode_complete(
     write_bytes(out, out_len, &msg.encode())
 }
 
-/// Encode Cancel message (`reason` optional, pass null/0 for none).
 #[no_mangle]
 pub extern "C" fn nearby_c_msg_encode_cancel(
     session_id_ptr: *const u8,
@@ -228,20 +234,38 @@ pub extern "C" fn nearby_c_msg_parse_offer(
     0
 }
 
+/// Parse Response. accepted_out, optional reason into reason_out.
 #[no_mangle]
 pub extern "C" fn nearby_c_msg_parse_response(
     data_ptr: *const u8,
     data_len: usize,
     accepted_out: *mut i32,
+    reason_out: *mut u8,
+    reason_cap: usize,
+    reason_len_out: *mut i32,
 ) -> i32 {
     if data_ptr.is_null() || accepted_out.is_null() {
         return -1;
     }
     let data = unsafe { slice::from_raw_parts(data_ptr, data_len) };
     match Message::decode(data) {
-        Ok(Message::Response { accepted, .. }) => {
+        Ok(Message::Response {
+            accepted,
+            reason,
+            ..
+        }) => {
             unsafe {
                 *accepted_out = if accepted { 1 } else { 0 };
+            }
+            if !reason_len_out.is_null() {
+                let r = reason.unwrap_or_default();
+                let n = write_bytes(reason_out, reason_cap, r.as_bytes());
+                if n < 0 {
+                    return n;
+                }
+                unsafe {
+                    *reason_len_out = n;
+                }
             }
             0
         }
