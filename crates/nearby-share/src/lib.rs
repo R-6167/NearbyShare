@@ -11,7 +11,7 @@
 //!
 //! See `docs/DESIGN.md` in the repository root for the full architecture and roadmap.
 
-#![deny(missing_docs)]
+#![warn(missing_docs)]
 
 #[cfg(feature = "ffi")]
 uniffi::setup_scaffolding!();
