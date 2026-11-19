@@ -1,0 +1,39 @@
+[package]
+name = "nearby-share"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Offline, peer-to-peer nearby file sharing core (platform-agnostic)"
+readme = "../../README.md"
+
+[lib]
+name = "nearby_share"
+crate-type = ["cdylib", "staticlib", "lib"]
+
+[dependencies]
+# Cryptography (to be filled in later)
+# rand = "0.8"
+# sha2 = "0.10"
+# hmac = "0.12"
+# aes-gcm = "0.10"
+# x25519-dalek = "2"
+# ed25519-dalek = "2"
+
+# Serialization / protocol
+# serde = { version = "1", features = ["derive"] }
+# serde_json = "1"
+# bytes = "1"
+
+# Async runtime (if needed later)
+# tokio = { version = "1", features = ["rt", "sync", "macros"] }
+
+# UniFFI (enable when generating bindings)
+# uniffi = { version = "0.28", features = ["cli"] }
+
+[dev-dependencies]
+
+[features]
+default = []
+# uniffi = ["dep:uniffi"]
