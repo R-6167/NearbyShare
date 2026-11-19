@@ -6,7 +6,7 @@ import com.sun.jna.ptr.IntByReference
 import com.sun.jna.ptr.LongByReference
 import java.nio.charset.StandardCharsets
 
-/** JNA bridge to `libnearby_share` (session + framing + protocol messages). */
+/** JNA bridge to `libnearby_share` (session + framing + protocol + hasher). */
 object NearbyCore {
     private interface NativeLib : Library {
         fun nearby_c_version(buf: ByteArray, len: Int): Int
@@ -54,6 +54,11 @@ object NearbyCore {
         ): Int
 
         fun nearby_c_hash(data: ByteArray, dataLen: Int, out: ByteArray): Int
+
+        fun nearby_c_hasher_new(): Long
+        fun nearby_c_hasher_update(handle: Long, data: ByteArray, len: Int): Int
+        fun nearby_c_hasher_finalize(handle: Long, out: ByteArray): Int
+        fun nearby_c_hasher_free(handle: Long)
     }
 
     @Volatile private var lib: NativeLib? = null
@@ -203,5 +208,37 @@ object NearbyCore {
         val n = lib().nearby_c_hash(data, data.size, out)
         if (n != 32) error("hash failed $n")
         return out
+    }
+
+    /** Streaming BLAKE3 hasher (does not keep payload in JVM heap beyond each update). */
+    class Hasher internal constructor(private var handle: Long) : AutoCloseable {
+        fun update(data: ByteArray, offset: Int = 0, length: Int = data.size) {
+            require(handle > 0)
+            val slice = if (offset == 0 && length == data.size) data else data.copyOfRange(offset, offset + length)
+            val rc = lib().nearby_c_hasher_update(handle, slice, slice.size)
+            if (rc != 0) error("hasher update $rc")
+        }
+
+        fun finalizeHash(): ByteArray {
+            require(handle > 0)
+            val out = ByteArray(32)
+            val n = lib().nearby_c_hasher_finalize(handle, out)
+            handle = -1
+            if (n != 32) error("hasher finalize $n")
+            return out
+        }
+
+        override fun close() {
+            if (handle > 0) {
+                lib().nearby_c_hasher_free(handle)
+                handle = -1
+            }
+        }
+    }
+
+    fun newHasher(): Hasher {
+        val h = lib().nearby_c_hasher_new()
+        if (h <= 0) error("hasher_new $h")
+        return Hasher(h)
     }
 }
