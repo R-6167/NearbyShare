@@ -31,15 +31,18 @@ android {
         jvmTarget = "17"
     }
 
-    // UniFFI-generated Kotlin (scripts/build-android-native.sh)
-    sourceSets.getByName("main").java.srcDir("src/main/java")
+    packaging {
+        jniLibs {
+            // JNA needs to map .so files; keep them extractable.
+            useLegacyPackaging = true
+        }
+    }
 
-    // Native libraries built by cargo-ndk into src/main/jniLibs/<abi>/
+    sourceSets.getByName("main").java.srcDir("src/main/java")
     sourceSets.getByName("main").jniLibs.srcDir("src/main/jniLibs")
 }
 
 dependencies {
-    // UniFFI runtime (JNA)
     implementation("net.java.dev.jna:jna:5.15.0@aar")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
 
