@@ -25,6 +25,8 @@ object QrBootstrap {
     )
 
     fun encodeUri(p: Payload): String {
+        require(p.host.isNotBlank()) { "host is required" }
+        require(p.port in 1..65535) { "port must be between 1 and 65535" }
         val q = buildString {
             append("host=").append(enc(p.host))
             append("&port=").append(p.port)
