@@ -38,8 +38,17 @@
             android:id="@+id/hostInput"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="Peer IP (for Join)"
+            android:hint="Peer IP (Join)"
             android:inputType="text" />
+
+        <EditText
+            android:id="@+id/payloadInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Text to send as note.txt (Join)"
+            android:inputType="textMultiLine"
+            android:minLines="3"
+            android:text="Hello from NearbyShare" />
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -58,14 +67,14 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Join LAN" />
+                android:text="Join + send" />
         </LinearLayout>
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:text="Host waits on port 19730. Join uses the IP of the host phone (same Wi‑Fi). Both show the same PIN after handshake."
+            android:text="Same Wi‑Fi. Host first, then Join with host IP. Transfer uses Offer → Accept → Chunks → Complete, all encrypted."
             android:textSize="13sp" />
     </LinearLayout>
 </ScrollView>
