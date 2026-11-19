@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build libnearby_share.so for Android ABIs and generate UniFFI Kotlin bindings
-# into android/nearbyshare.
+# into android/nearbyshare (Gradle project :warpair-core).
 #
 # Prerequisites:
 #   - rustup targets (see rust-toolchain.toml)
@@ -19,8 +19,6 @@ mkdir -p "$JNI_DIR" "$GEN_DIR"
 echo "==> Building release cdylib for Android (cargo-ndk)"
 cd "$ROOT"
 
-# Map: ABI directory name used by Android
-# arm64-v8a, armeabi-v7a, x86_64, x86
 cargo ndk \
   -t arm64-v8a \
   -t armeabi-v7a \
@@ -30,7 +28,6 @@ cargo ndk \
   build -p nearby-share --release
 
 echo "==> Generating UniFFI Kotlin bindings"
-# Prefer a host .so from the Android build if present; otherwise build host lib.
 HOST_LIB=""
 if [[ -f "$ROOT/target/release/libnearby_share.so" ]]; then
   HOST_LIB="$ROOT/target/release/libnearby_share.so"
@@ -57,6 +54,6 @@ uniffi-bindgen generate \
 
 echo "==> Done"
 echo "    jniLibs: $JNI_DIR"
-echo "    kotlin:  $GEN_DIR/com/crypticsystems/nearbyshare/"
+echo "    kotlin:  $GEN_DIR/com/crypticsystems/warpair/core/"
 echo ""
-echo "Open android/ in Android Studio and run :app"
+echo "Open android/ in Android Studio and run :app (WarPair)"
