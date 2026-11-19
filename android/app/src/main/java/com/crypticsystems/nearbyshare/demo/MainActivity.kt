@@ -34,7 +34,7 @@ class MainActivity : AppCompatActivity() {
             val sizeLabel = if (picked!!.size >= 0) "${picked!!.size} bytes" else "size unknown"
             val cat = ReceivedFiles.categoryFor(picked!!.displayName).folderName
             findViewById<TextView>(R.id.pickedFileText).text =
-                "Selected: ${picked!!.displayName} ($sizeLabel) → would land in $cat on receiver"
+                "Selected: ${picked!!.displayName} ($sizeLabel) → private NearbyShare/$cat"
         } catch (t: Throwable) {
             picked = null
             findViewById<TextView>(R.id.pickedFileText).text =
@@ -75,9 +75,9 @@ class MainActivity : AppCompatActivity() {
         val payloadInput = findViewById<EditText>(R.id.payloadInput)
 
         status.text = buildString {
-            appendLine("Library:")
+            appendLine("Private library (app-only, not in Movies/Downloads):")
             appendLine(libraryRoot.absolutePath)
-            appendLine("Folders: Music, Videos, Images, Documents, Archives, Other")
+            appendLine("Categories: Music · Videos · Images · Documents · Archives · Other")
             appendLine()
             appendLine("IPs:")
             append(localIpv4List())
