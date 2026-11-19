@@ -210,11 +210,17 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             val name = nameInput.text?.toString()?.ifBlank { "Host" } ?: "Host"
+            val listenPort = portInput.text?.toString()?.toIntOrNull() ?: LanLink.DEFAULT_PORT
+            if (listenPort !in 1..65535) {
+                status.text = "Enter a valid listening port (1–65535)."
+                return@setOnClickListener
+            }
             val control = LanLink.TransferControl()
             runBg(listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton, softApButton), cancelButton, status, control) {
                 try {
                     LanLink.hostOnce(
                         deviceName = name,
+                        port = listenPort,
                         control = control,
                         onProgress = progressTo(status),
                         onListening = { boundPort ->
