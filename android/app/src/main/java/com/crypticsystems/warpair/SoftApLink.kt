@@ -88,7 +88,7 @@ class SoftApLink(context: Context) {
     /** Resolve the actual IPv4 address assigned to the hotspot interface; never guess a gateway. */
     private fun detectSoftApHostIp(): String? {
         return try {
-            val interfaces = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
+            val interfaces = NetworkInterface.getNetworkInterfaces()?.asSequence()?.toList().orEmpty()
                 .filter { it.isUp && !it.isLoopback }
             val preferred = interfaces.filter { ni ->
                 val name = ni.name.lowercase()
@@ -96,7 +96,7 @@ class SoftApLink(context: Context) {
                     name.contains("wlan") || name.contains("swlan")
             }
             val candidates = (preferred + interfaces.filterNot { it in preferred }).flatMap { ni ->
-                ni.inetAddresses.toList().filterIsInstance<Inet4Address>()
+                ni.inetAddresses.asSequence().filterIsInstance<Inet4Address>().toList()
                     .filter { !it.isLoopbackAddress && it.isSiteLocalAddress }
                     .map { ni.name to it.hostAddress }
             }
