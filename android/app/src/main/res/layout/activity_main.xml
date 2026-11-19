@@ -47,6 +47,14 @@
             android:hint="Peer IP (peer list / QR)"
             android:inputType="text" />
 
+        <EditText
+            android:id="@+id/portInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="TCP port (default 19730)"
+            android:inputType="number"
+            android:text="19730" />
+
         <Button
             android:id="@+id/softApButton"
             android:layout_width="match_parent"
