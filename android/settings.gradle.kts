@@ -16,5 +16,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "WarPair"
 
-include(":nearbyshare")
+// Physical dir still android/nearbyshare until a full tree move; project name is WarPair.
+include(":warpair-core")
+project(":warpair-core").projectDir = file("nearbyshare")
 include(":app")
