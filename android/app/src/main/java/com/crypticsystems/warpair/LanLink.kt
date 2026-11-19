@@ -7,6 +7,7 @@ import java.io.EOFException
 import java.io.InputStream
 import java.net.ConnectException
 import java.net.InetSocketAddress
+import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
@@ -102,13 +103,32 @@ object LanLink {
             try {
                 socket.connect(InetSocketAddress(host, port), 12_000)
             } catch (e: ConnectException) {
-                throw IOException("Cannot reach $host:$port. Check that the other phone is hosting and both phones are on the same Wi‑Fi or SoftAP.", e)
+                throw IOException(
+                    "Connection refused by $host:$port. The other phone must tap HOST / RECEIVE and keep that screen open before connecting. " +
+                        "Confirm both phones are on the same Wi-Fi/SoftAP and use the host phone's current Wi-Fi IP. " +
+                        "This phone's IPv4 addresses: ${localIpv4Addresses()}",
+                    e,
+                )
             } catch (e: SocketTimeoutException) {
-                throw IOException("Connection to $host:$port timed out. Check the IP, port, Wi‑Fi network and hotspot client isolation.", e)
+                throw IOException(
+                    "Connection to $host:$port timed out. Check that both phones are on the same Wi-Fi/SoftAP, " +
+                        "that the host is listening, and that hotspot client isolation is disabled. " +
+                        "This phone's IPv4 addresses: ${localIpv4Addresses()}",
+                    e,
+                )
             }
             return runClient(socket, deviceName, files, control, onProgress, onPinConfirm)
         }
     }
+
+    private fun localIpv4Addresses(): String = try {
+        NetworkInterface.getNetworkInterfaces()?.asSequence()?.filter { it.isUp && !it.isLoopback }
+            ?.flatMap { ni ->
+                ni.inetAddresses.asSequence()
+                    .filter { it is java.net.Inet4Address && !it.isLoopbackAddress }
+                    .map { "${ni.name}=${it.hostAddress}" }
+            }?.toList()?.joinToString(", ")?.ifBlank { "(none found)" } ?: "(none found)"
+    } catch (_: Throwable) { "(unavailable)" }
 
     private fun runHost(
         socket: Socket, deviceName: String, control: TransferControl, onProgress: Progress?,
@@ -138,7 +158,7 @@ object LanLink {
                 index++; reports += receiveOne(session, input, output, peer, pin, offerPlain, index, control, onProgress, onOffer)
             }
             if (reports.isEmpty()) return "No files from $peer"
-            return "BATCH OK (receiver) — ${reports.size}\n" + reports.joinToString("\n---\n")
+            return "BATCH OK (receiver) — ${reports.size}\\n" + reports.joinToString("\\n---\\n")
         }
     }
 
@@ -157,7 +177,7 @@ object LanLink {
                 control.check()
                 sendOne(session, input, output, peer, pin, f, i + 1, files.size, control, onProgress)
             }
-            return "BATCH OK (sender) — ${files.size}\n" + reports.joinToString("\n---\n")
+            return "BATCH OK (sender) — ${files.size}\\n" + reports.joinToString("\\n---\\n")
         }
     }
 
@@ -259,7 +279,6 @@ object LanLink {
             initialSequence = resume?.nextSeq ?: 0L,
         )
         try {
-            // Hash the existing prefix too, so resumed files are verified end-to-end.
             if (resume != null) {
                 resume.partialFile.inputStream().buffered().use { existing ->
                     val prefix = ByteArray(CHUNK)
