@@ -44,7 +44,7 @@
             android:id="@+id/hostInput"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="Peer IP (auto-filled by Discover)"
+            android:hint="Peer IP (or tap a peer below)"
             android:inputType="text" />
 
         <Button
@@ -54,12 +54,16 @@
             android:text="Discover peers (mDNS)" />
 
         <TextView
-            android:id="@+id/peersText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Peers: (none yet)"
-            android:textIsSelectable="true"
+            android:text="Peers — tap to select:"
             android:textSize="13sp" />
+
+        <ListView
+            android:id="@+id/peersList"
+            android:layout_width="match_parent"
+            android:layout_height="120dp"
+            android:dividerHeight="1dp" />
 
         <Button
             android:id="@+id/pickFileButton"
@@ -114,7 +118,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:text="After connect, both phones confirm the same PIN. Use Cancel to stop a running transfer."
+            android:text="Tap a peer to select. Cancel keeps partials so the next send can Resume."
             android:textSize="13sp" />
     </LinearLayout>
 </ScrollView>
