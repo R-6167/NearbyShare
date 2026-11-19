@@ -1,15 +1,14 @@
-//! UniFFI-exported API surface.
-//!
-//! This module defines the stable interface that Android (Kotlin) and later iOS (Swift)
-//! bind against. Keep it small, explicit, and free of internal types that are awkward
-//! across the FFI boundary.
+//! UniFFI-exported API surface for Android (Kotlin) and iOS (Swift).
 //!
 //! Enable with the `ffi` feature (on by default).
+//! The Android demo currently also uses a stable C ABI (`c_api` / `c_msg`) via JNA
+//! so CI can ship APKs without running `uniffi-bindgen` on the agent. Both surfaces
+//! call the same session/crypto core.
 
 use std::sync::{Arc, Mutex};
 
-use crate::crypto::DeviceIdentity;
-use crate::protocol::Medium;
+use crate::crypto::{hash_bytes, DeviceIdentity};
+use crate::protocol::{FileInfo, Medium, Message};
 use crate::session::{Role, SecureSession, SessionError, SessionPhase};
 
 // ---------------------------------------------------------------------------
@@ -125,14 +124,36 @@ pub struct IdentityInfo {
     pub public_key: Vec<u8>,
 }
 
-/// Phase of a secure session, for UI / state machines on the native side.
+/// File metadata in an offer.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiFileInfo {
+    /// Id within the session (1-based typical).
+    pub file_id: u32,
+    /// File name including extension.
+    pub name: String,
+    /// Size in bytes.
+    pub size: u64,
+}
+
+/// Parsed offer for UI.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiOffer {
+    /// Session id chosen by sender.
+    pub session_id: String,
+    /// Files being offered.
+    pub files: Vec<FfiFileInfo>,
+    /// Total bytes.
+    pub total_bytes: u64,
+}
+
+/// Phase of a secure session.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum FfiSessionPhase {
     /// Not started.
     New,
     /// Handshake in progress.
     Handshaking,
-    /// Keys established; `pin` is available for confirmation UX.
+    /// Keys established.
     Established {
         /// 4-digit PIN.
         pin: String,
@@ -158,7 +179,7 @@ impl From<&SessionPhase> for FfiSessionPhase {
 }
 
 // ---------------------------------------------------------------------------
-// Identity handle
+// Identity
 // ---------------------------------------------------------------------------
 
 /// Opaque handle to a device identity (X25519 keypair).
@@ -198,16 +219,10 @@ impl FfiIdentity {
 }
 
 // ---------------------------------------------------------------------------
-// Secure session handle
+// Session
 // ---------------------------------------------------------------------------
 
 /// Secure session between this device and one peer.
-///
-/// Typical flow:
-/// 1. `FfiSession::new(...)`
-/// 2. `begin_handshake()` → send bytes to peer
-/// 3. Receive peer hello bytes → `complete_handshake(peer_hello)`
-/// 4. `seal` / `open` application payloads (already length-framed by caller if needed)
 #[derive(uniffi::Object)]
 pub struct FfiSession {
     inner: Mutex<SecureSession>,
@@ -216,10 +231,6 @@ pub struct FfiSession {
 #[uniffi::export]
 impl FfiSession {
     /// Create a new session.
-    ///
-    /// * `identity` – local identity
-    /// * `initiator` – true if we are opening the connection
-    /// * `mediums` – mediums we support (order = preference)
     #[uniffi::constructor]
     pub fn new(identity: Arc<FfiIdentity>, initiator: bool, mediums: Vec<FfiMedium>) -> Arc<Self> {
         let role = if initiator {
@@ -239,7 +250,7 @@ impl FfiSession {
         FfiSessionPhase::from(guard.phase())
     }
 
-    /// 4-digit PIN once established; empty string otherwise.
+    /// 4-digit PIN once established; empty otherwise.
     pub fn pin(&self) -> String {
         let guard = self.inner.lock().expect("session lock");
         guard.pin().unwrap_or("").to_string()
@@ -257,7 +268,7 @@ impl FfiSession {
         guard.peer_fingerprint().map(str::to_string)
     }
 
-    /// Mediums supported by both peers (local preference order).
+    /// Mediums supported by both peers.
     pub fn negotiated_mediums(&self) -> Vec<FfiMedium> {
         let guard = self.inner.lock().expect("session lock");
         guard
@@ -267,7 +278,7 @@ impl FfiSession {
             .collect()
     }
 
-    /// Produce our Hello bytes and move to handshaking.
+    /// Produce our Hello bytes.
     pub fn begin_handshake(&self) -> Result<Vec<u8>, NearbyError> {
         let mut guard = self.inner.lock().expect("session lock");
         guard.begin_handshake().map_err(Into::into)
@@ -279,13 +290,13 @@ impl FfiSession {
         guard.complete_handshake(&peer_hello).map_err(Into::into)
     }
 
-    /// Encrypt an application payload (session must be established).
+    /// Encrypt an application payload.
     pub fn seal(&self, plaintext: Vec<u8>) -> Result<Vec<u8>, NearbyError> {
         let guard = self.inner.lock().expect("session lock");
         guard.seal(&plaintext).map_err(Into::into)
     }
 
-    /// Decrypt an application payload (session must be established).
+    /// Decrypt an application payload.
     pub fn open(&self, ciphertext: Vec<u8>) -> Result<Vec<u8>, NearbyError> {
         let guard = self.inner.lock().expect("session lock");
         guard.open(&ciphertext).map_err(Into::into)
@@ -299,7 +310,197 @@ impl FfiSession {
 }
 
 // ---------------------------------------------------------------------------
-// Free functions
+// Streaming hasher
+// ---------------------------------------------------------------------------
+
+/// Incremental BLAKE3 hasher for large file transfers.
+#[derive(uniffi::Object)]
+pub struct FfiHasher {
+    inner: Mutex<blake3::Hasher>,
+}
+
+#[uniffi::export]
+impl FfiHasher {
+    /// Create a new hasher.
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(blake3::Hasher::new()),
+        })
+    }
+
+    /// Absorb more bytes.
+    pub fn update(&self, data: Vec<u8>) {
+        let mut guard = self.inner.lock().expect("hasher lock");
+        guard.update(&data);
+    }
+
+    /// Finalize and return 32-byte digest (hasher should not be reused).
+    pub fn finalize(&self) -> Vec<u8> {
+        let guard = self.inner.lock().expect("hasher lock");
+        guard.finalize().as_bytes().to_vec()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Protocol helpers
+// ---------------------------------------------------------------------------
+
+/// Encode a single-file Offer message.
+#[uniffi::export]
+pub fn msg_encode_offer(session_id: String, file_name: String, size: u64) -> Vec<u8> {
+    Message::Offer {
+        session_id,
+        files: vec![FileInfo {
+            file_id: 1,
+            name: file_name,
+            size,
+            mime_type: None,
+            relative_path: None,
+        }],
+        total_bytes: size,
+    }
+    .encode()
+}
+
+/// Encode a multi-file Offer message.
+#[uniffi::export]
+pub fn msg_encode_offer_multi(session_id: String, files: Vec<FfiFileInfo>) -> Vec<u8> {
+    let total: u64 = files.iter().map(|f| f.size).sum();
+    let mapped: Vec<FileInfo> = files
+        .into_iter()
+        .map(|f| FileInfo {
+            file_id: f.file_id,
+            name: f.name,
+            size: f.size,
+            mime_type: None,
+            relative_path: None,
+        })
+        .collect();
+    Message::Offer {
+        session_id,
+        files: mapped,
+        total_bytes: total,
+    }
+    .encode()
+}
+
+/// Encode Response.
+#[uniffi::export]
+pub fn msg_encode_response(session_id: String, accepted: bool) -> Vec<u8> {
+    Message::Response {
+        session_id,
+        accepted,
+        reason: None,
+    }
+    .encode()
+}
+
+/// Encode Chunk.
+#[uniffi::export]
+pub fn msg_encode_chunk(
+    session_id: String,
+    file_id: u32,
+    seq: u64,
+    data: Vec<u8>,
+    is_last: bool,
+) -> Vec<u8> {
+    Message::Chunk {
+        session_id,
+        file_id,
+        seq,
+        data,
+        is_last,
+    }
+    .encode()
+}
+
+/// Encode Complete for a single file hash.
+#[uniffi::export]
+pub fn msg_encode_complete(session_id: String, file_id: u32, hash32: Vec<u8>) -> Result<Vec<u8>, NearbyError> {
+    if hash32.len() != 32 {
+        return Err(NearbyError::Protocol {
+            reason: "hash must be 32 bytes".into(),
+        });
+    }
+    let mut h = [0u8; 32];
+    h.copy_from_slice(&hash32);
+    Ok(Message::Complete {
+        session_id,
+        checksums: vec![(file_id, h)],
+    }
+    .encode())
+}
+
+/// Message tag 1..=8.
+#[uniffi::export]
+pub fn msg_tag(data: Vec<u8>) -> Result<u8, NearbyError> {
+    match Message::decode(&data) {
+        Ok(Message::Hello { .. }) => Ok(1),
+        Ok(Message::Offer { .. }) => Ok(2),
+        Ok(Message::Response { .. }) => Ok(3),
+        Ok(Message::SessionReady { .. }) => Ok(4),
+        Ok(Message::Chunk { .. }) => Ok(5),
+        Ok(Message::Progress { .. }) => Ok(6),
+        Ok(Message::Complete { .. }) => Ok(7),
+        Ok(Message::Cancel { .. }) => Ok(8),
+        Err(e) => Err(NearbyError::Protocol {
+            reason: e.to_string(),
+        }),
+    }
+}
+
+/// Parse an Offer.
+#[uniffi::export]
+pub fn msg_parse_offer(data: Vec<u8>) -> Result<FfiOffer, NearbyError> {
+    match Message::decode(&data) {
+        Ok(Message::Offer {
+            session_id,
+            files,
+            total_bytes,
+        }) => Ok(FfiOffer {
+            session_id,
+            files: files
+                .into_iter()
+                .map(|f| FfiFileInfo {
+                    file_id: f.file_id,
+                    name: f.name,
+                    size: f.size,
+                })
+                .collect(),
+            total_bytes,
+        }),
+        Ok(_) => Err(NearbyError::Protocol {
+            reason: "not an Offer".into(),
+        }),
+        Err(e) => Err(NearbyError::Protocol {
+            reason: e.to_string(),
+        }),
+    }
+}
+
+/// Parse Response accepted flag.
+#[uniffi::export]
+pub fn msg_parse_response_accepted(data: Vec<u8>) -> Result<bool, NearbyError> {
+    match Message::decode(&data) {
+        Ok(Message::Response { accepted, .. }) => Ok(accepted),
+        Ok(_) => Err(NearbyError::Protocol {
+            reason: "not a Response".into(),
+        }),
+        Err(e) => Err(NearbyError::Protocol {
+            reason: e.to_string(),
+        }),
+    }
+}
+
+/// One-shot BLAKE3.
+#[uniffi::export]
+pub fn blake3_hash(data: Vec<u8>) -> Vec<u8> {
+    hash_bytes(&data).to_vec()
+}
+
+// ---------------------------------------------------------------------------
+// Framing + health
 // ---------------------------------------------------------------------------
 
 /// Library version string.
@@ -308,7 +509,7 @@ pub fn library_version() -> String {
     crate::VERSION.to_string()
 }
 
-/// Health-check / smoke string for verifying the native binding loads.
+/// Health-check string.
 #[uniffi::export]
 pub fn library_hello() -> String {
     crate::hello()
@@ -327,11 +528,11 @@ pub struct FrameDecodeResult {
     pub complete: bool,
     /// Payload bytes (empty if incomplete).
     pub payload: Vec<u8>,
-    /// Number of bytes consumed from the front of the buffer (0 if incomplete).
+    /// Bytes consumed from the buffer front (0 if incomplete).
     pub consumed: u32,
 }
 
-/// Try to decode one length-prefixed frame from `buffer`.
+/// Try to decode one length-prefixed frame.
 #[uniffi::export]
 pub fn frame_try_decode(buffer: Vec<u8>) -> FrameDecodeResult {
     match crate::session::framing::try_decode_frame(&buffer) {
