@@ -8,9 +8,6 @@ import androidx.appcompat.app.AppCompatActivity
 import com.crypticsystems.nearbyshare.NearbyCore
 import java.net.NetworkInterface
 
-/**
- * Demo: on-device smoke + two-phone LAN handshake over TCP.
- */
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -22,8 +19,9 @@ class MainActivity : AppCompatActivity() {
         val joinButton = findViewById<Button>(R.id.joinButton)
         val nameInput = findViewById<EditText>(R.id.nameInput)
         val hostInput = findViewById<EditText>(R.id.hostInput)
+        val payloadInput = findViewById<EditText>(R.id.payloadInput)
 
-        status.text = "Local IPs:\n${localIpv4List()}\n\nSmoke test or Host/Join on the same Wi‑Fi."
+        status.text = "IPs:\n${localIpv4List()}\n\nHost waits; Join sends the payload as note.txt."
 
         smokeButton.setOnClickListener {
             runBg(smokeButton, status) {
@@ -35,20 +33,21 @@ class MainActivity : AppCompatActivity() {
         hostButton.setOnClickListener {
             val name = nameInput.text?.toString()?.ifBlank { "Host" } ?: "Host"
             runBg(hostButton, status) {
-                "Hosting on port ${LanLink.DEFAULT_PORT}…\nIPs:\n${localIpv4List()}\n\n" +
-                    LanLink.hostOnce(name)
+                LanLink.hostOnce(name)
             }
         }
 
         joinButton.setOnClickListener {
             val name = nameInput.text?.toString()?.ifBlank { "Client" } ?: "Client"
             val host = hostInput.text?.toString()?.trim().orEmpty()
+            val payload = payloadInput.text?.toString() ?: ""
             if (host.isEmpty()) {
-                status.text = "Enter the host phone IP first."
+                status.text = "Enter host IP."
                 return@setOnClickListener
             }
+            val bytes = payload.toByteArray(Charsets.UTF_8)
             runBg(joinButton, status) {
-                LanLink.connectOnce(host, LanLink.DEFAULT_PORT, name)
+                LanLink.connectOnce(host, LanLink.DEFAULT_PORT, name, "note.txt", bytes)
             }
         }
     }
@@ -60,7 +59,7 @@ class MainActivity : AppCompatActivity() {
             val result = try {
                 block()
             } catch (t: Throwable) {
-                "Error: ${t.javaClass.simpleName}: ${t.message}\n\n${t.stackTraceToString().take(1200)}"
+                "Error: ${t.javaClass.simpleName}: ${t.message}\n\n${t.stackTraceToString().take(1500)}"
             }
             runOnUiThread {
                 status.text = result
@@ -86,6 +85,6 @@ class MainActivity : AppCompatActivity() {
             }
         } catch (_: Exception) {
         }
-        return if (ips.isEmpty()) "(none found)" else ips.joinToString("\n")
+        return if (ips.isEmpty()) "(none)" else ips.joinToString("\n")
     }
 }
