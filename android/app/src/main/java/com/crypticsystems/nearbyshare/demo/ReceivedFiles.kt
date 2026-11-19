@@ -34,25 +34,35 @@ data class SaveResult(
         appendLine("saved_as=$fileName")
         appendLine("app_path=$appPath")
         appendLine("bytes=$bytes")
+        appendLine("storage=private_internal")
     }
 }
 
 /**
- * App-private library:
+ * Private app library (not public Movies/Music/Downloads).
  *
+ * Path (sandbox; not visible in normal file managers without root/debug):
  * ```
- * Android/data/<pkg>/files/NearbyShare/
- *   Music/ Videos/ Images/ Documents/ Archives/ Other/
+ * /data/data/<package>/files/NearbyShare/
+ *   Music/
+ *   Videos/
+ *   Images/
+ *   Documents/
+ *   Archives/
+ *   Other/
  * ```
  *
- * Received files stream directly into the matching category folder.
+ * Uses [Context.getFilesDir], not MediaStore and not shared external storage.
  */
 object ReceivedFiles {
     const val ROOT_NAME = "NearbyShare"
 
     fun rootDir(context: Context): File {
-        val root = File(context.getExternalFilesDir(null), ROOT_NAME)
-        root.mkdirs()
+        // Internal private storage only — own top-level folder under the app sandbox.
+        val root = File(context.filesDir, ROOT_NAME)
+        if (!root.exists()) {
+            root.mkdirs()
+        }
         return root
     }
 
@@ -97,10 +107,7 @@ object ReceivedFiles {
             ?: error("Cannot open selected file")
     }
 
-    /**
-     * Open a unique destination file in the right category and return a streaming sink.
-     * Chunks should be [IncomingFileSink.write]n then [IncomingFileSink.finish].
-     */
+    /** Stream received chunks into the private categorized library. */
     fun openIncoming(context: Context, fileName: String): IncomingFileSink {
         ensureLibrary(context)
         val safe = sanitizeFileName(fileName)
@@ -130,7 +137,6 @@ object ReceivedFiles {
                     if (idx >= 0 && !c.isNull(idx)) return c.getLong(idx)
                 }
             }
-        // Fallback: unknown size
         return -1L
     }
 
