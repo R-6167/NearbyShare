@@ -42,6 +42,21 @@ object LanLink {
     data class OfferResult(val action: OfferAction, val resumeFrom: PartialInfo? = null)
     fun interface OfferDecision { fun decide(offer: OfferRequest): OfferResult }
 
+    private fun measureStream(stream: InputStream): Long {
+        var total = 0L
+        val buffer = ByteArray(CHUNK)
+        stream.use { source ->
+            while (true) {
+                val n = source.read(buffer)
+                if (n < 0) break
+                if (n == 0) continue
+                require(total <= MAX_BYTES - n) { "file exceeds maximum supported size" }
+                total += n
+            }
+        }
+        return total
+    }
+
     fun writeFrame(out: DataOutputStream, payload: ByteArray) {
         out.write(NearbyCore.frameEncode(payload)); out.flush()
     }
@@ -138,8 +153,10 @@ object LanLink {
         control: TransferControl, onProgress: Progress?,
     ): String {
         val sessionId = "xfer-${UUID.randomUUID().toString().take(8)}"
-        require(file.size in 0..MAX_BYTES) { "file size must be known and no larger than $MAX_BYTES bytes" }
-        val offerSize = file.size
+        require(file.size == -1L || file.size in 0..MAX_BYTES) {
+            "file size is invalid or exceeds $MAX_BYTES bytes"
+        }
+        val offerSize = if (file.size >= 0) file.size else measureStream(file.openStream())
         sendSealed(session, output, NearbyCore.encodeOffer(sessionId, file.fileName, offerSize))
         val respPlain = readSealed(session, input)
         if (NearbyCore.msgTag(respPlain) == 8) return "CANCELLED by peer"
@@ -204,7 +221,7 @@ object LanLink {
         val resume = requestedResume?.takeIf {
             it.partialFile.isFile && it.bytesReceived == it.partialFile.length() &&
                 it.bytesReceived in 1 until offer.size && it.bytesReceived % CHUNK == 0L &&
-                it.nextSeq >= 0
+                it.nextSeq == it.bytesReceived / CHUNK
         }
         if (requestedResume != null && resume == null) {
             sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, false, "invalid_resume_state"))
