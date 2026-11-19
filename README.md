@@ -1,23 +1,27 @@
-# NearbyShare
+# WarPair
 
-**Offline, peer-to-peer nearby file sharing foundation** for Android (and later iOS).  
-Rust core + native platform bindings. No cloud. Ever.
+**Offline, peer-to-peer nearby file sharing** for Android (iOS later).  
+Rust core + native bindings. No cloud.
+
+> Repository folder may still show historical paths (`nearby-share`, `android/nearbyshare`); the **product name and Android app id** are **WarPair** / `com.crypticsystems.warpair`.
 
 ## Status
 
-- Crypto, session, protocol codec, UniFFI surface
-- Android demo APK with **on-device smoke test** (identity + handshake + seal/open)
-- CLI + **GitHub Actions** APK build (no Android Studio required)
+- Crypto, session, protocol codec, C ABI / UniFFI surface
+- Android APK: smoke test, LAN transfer, SoftAP + QR bootstrap, resume, PIN confirm
+- CLI + **GitHub Actions** APK (no Android Studio required)
 
-Docs: [DESIGN](docs/DESIGN.md) · [FFI](docs/FFI.md) · [Android](android/README.md)
+Docs: [DESIGN](docs/DESIGN.md) · [WARPAIR](docs/WARPAIR.md) · [Android](android/README.md)
 
-## Test on your phone (GitHub only)
+## Test on your phone (GitHub)
 
-1. Wait for the **Android APK** workflow on `main` to go green  
-2. Actions → run → Artifacts → **NearbyShare-demo-debug**  
-3. Install `app-debug.apk` on the phone  
-4. Open **NearbyShare Demo** → **Run core smoke test**  
+1. Wait for **Android APK** on `main` to go green  
+2. Actions → Artifacts → **`WarPair-debug`**  
+3. Install `WarPair-debug.apk` (or `app-debug.apk` fallback)  
+4. Open **WarPair** → **Run core smoke test**  
 5. Expect a report starting with `OK`
+
+Uninstall any old **NearbyShare Demo** package first (`com.crypticsystems.nearbyshare.demo`).
 
 ## Local Rust checks
 
