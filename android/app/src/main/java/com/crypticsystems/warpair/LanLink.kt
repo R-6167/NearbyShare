@@ -138,13 +138,17 @@ object LanLink {
         control: TransferControl, onProgress: Progress?,
     ): String {
         val sessionId = "xfer-${UUID.randomUUID().toString().take(8)}"
-        val offerSize = if (file.size >= 0) file.size else 0L
+        require(file.size in 0..MAX_BYTES) { "file size must be known and no larger than $MAX_BYTES bytes" }
+        val offerSize = file.size
         sendSealed(session, output, NearbyCore.encodeOffer(sessionId, file.fileName, offerSize))
         val respPlain = readSealed(session, input)
         if (NearbyCore.msgTag(respPlain) == 8) return "CANCELLED by peer"
         val response = NearbyCore.parseResponse(respPlain)
         if (!response.accepted) return "REJECTED ${file.fileName}"
-        val skip = response.reason?.removePrefix("resume_bytes:")?.toLongOrNull()?.coerceAtLeast(0) ?: 0L
+        val skip = response.reason?.removePrefix("resume_bytes:")?.toLongOrNull() ?: 0L
+        require(skip in 0..offerSize && (skip == offerSize || skip % CHUNK == 0L)) {
+            "receiver requested an invalid resume offset"
+        }
         val hasher = NearbyCore.newHasher()
         val buf = ByteArray(CHUNK)
         var sent = skip
@@ -167,6 +171,7 @@ object LanLink {
                     onProgress?.onProgress(sent, offerSize, "[$index/$total] sending")
                 }
             }
+            require(sent == offerSize) { "source size changed: expected $offerSize bytes, read $sent" }
             sendSealed(session, output, NearbyCore.encodeChunk(sessionId, 1, seq, ByteArray(0), true))
             sendSealed(session, output, NearbyCore.encodeComplete(sessionId, hasher.finalizeHash()))
             return "OK ${file.fileName} bytes=$sent skip=$skip"
@@ -182,6 +187,10 @@ object LanLink {
         control: TransferControl, onProgress: Progress?, onOffer: OfferDecision,
     ): String {
         val offer = NearbyCore.parseOffer(offerPlain)
+        if (offer.size !in 0..MAX_BYTES) {
+            sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, false, "invalid_file_size"))
+            return "REJECTED ${offer.fileName}: invalid file size"
+        }
         val category = ReceivedFiles.categoryFor(offer.fileName)
         val partial = ReceivedFiles.findPartial(offer.fileName, offer.size)
         val result = onOffer.decide(
@@ -191,41 +200,90 @@ object LanLink {
             sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, false))
             return "REJECTED ${offer.fileName}"
         }
-        val resume = if (result.action == OfferAction.RESUME) result.resumeFrom else null
-        val reason = if (resume != null && resume.bytesReceived > 0) "resume_bytes:${resume.bytesReceived}" else null
+        val requestedResume = if (result.action == OfferAction.RESUME) result.resumeFrom else null
+        val resume = requestedResume?.takeIf {
+            it.partialFile.isFile && it.bytesReceived == it.partialFile.length() &&
+                it.bytesReceived in 1 until offer.size && it.bytesReceived % CHUNK == 0L &&
+                it.nextSeq >= 0
+        }
+        if (requestedResume != null && resume == null) {
+            sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, false, "invalid_resume_state"))
+            return "REJECTED ${offer.fileName}: invalid resume state"
+        }
+        val reason = if (resume != null) "resume_bytes:${resume.bytesReceived}" else null
         sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, true, reason))
         val sink = ReceivedFiles.openIncoming(offer.fileName, resume)
         val hasher = NearbyCore.newHasher()
-        val resumed = resume != null && resume.bytesReceived > 0
+        var discardPartialOnFailure = false
+        var sawLastChunk = false
+        var expectedSeq = resume?.nextSeq ?: 0L
         try {
+            // Hash the existing prefix too, so resumed files are verified end-to-end.
+            if (resume != null) {
+                resume.partialFile.inputStream().buffered().use { existing ->
+                    val prefix = ByteArray(CHUNK)
+                    while (true) {
+                        val n = existing.read(prefix)
+                        if (n < 0) break
+                        if (n > 0) hasher.update(prefix, 0, n)
+                    }
+                }
+            }
+
             while (true) {
                 control.check()
                 val plain = readSealed(session, input)
                 when (NearbyCore.msgTag(plain)) {
                     5 -> {
+                        check(!sawLastChunk) { "received data after final chunk" }
                         val chunk = NearbyCore.parseChunk(plain)
+                        check(chunk.sessionId == offer.sessionId) { "chunk session mismatch" }
+                        check(chunk.fileId == 1) { "unexpected file id ${chunk.fileId}" }
+                        check(chunk.seq == expectedSeq) {
+                            "chunk sequence mismatch: expected $expectedSeq, got ${chunk.seq}"
+                        }
+                        check(chunk.data.size <= CHUNK) { "chunk exceeds maximum size" }
+                        check(sink.bytesWritten <= offer.size - chunk.data.size) {
+                            "received more bytes than offered"
+                        }
                         if (chunk.data.isNotEmpty()) {
                             sink.write(chunk.data)
-                            if (!resumed) hasher.update(chunk.data)
+                            hasher.update(chunk.data)
                         }
                         sink.noteSeq(chunk.seq)
+                        expectedSeq++
+                        sawLastChunk = chunk.isLast
                         onProgress?.onProgress(sink.bytesWritten, offer.size, "[$index] receiving")
                     }
-                    7 -> break
+                    7 -> {
+                        check(sawLastChunk) { "completion arrived before final chunk" }
+                        val complete = NearbyCore.parseComplete(plain)
+                        check(complete.sessionId == offer.sessionId) { "completion session mismatch" }
+                        check(complete.fileId == 1) { "completion file id mismatch" }
+                        check(sink.bytesWritten == offer.size) {
+                            "file size mismatch: expected ${offer.size}, received ${sink.bytesWritten}"
+                        }
+                        val actualHash = hasher.finalizeHash()
+                        if (!actualHash.contentEquals(complete.checksum)) {
+                            discardPartialOnFailure = true
+                            error("file checksum mismatch; received file discarded")
+                        }
+                        val save = sink.finish()
+                        return "OK ${save.fileName} bytes=${save.bytes} resumed=${resume != null}"
+                    }
                     8 -> { sink.abort(true); return "CANCELLED by peer" }
-                    else -> error("bad tag")
+                    else -> error("unexpected message while receiving file")
                 }
             }
-            if (!resumed) hasher.finalizeHash() else hasher.close()
-            val save = sink.finish()
-            return "OK ${save.fileName} bytes=${save.bytes} resumed=$resumed"
         } catch (_: TransferCancelledException) {
             hasher.close()
             try { sendSealed(session, output, NearbyCore.encodeCancel(offer.sessionId, "user_cancel")) } catch (_: Throwable) {}
             sink.abort(true)
             return "CANCELLED ${offer.fileName}"
         } catch (t: Throwable) {
-            hasher.close(); sink.abort(true); throw t
+            hasher.close()
+            sink.abort(!discardPartialOnFailure)
+            throw t
         }
     }
 }
