@@ -2,14 +2,14 @@ package com.crypticsystems.nearbyshare.demo
 
 import android.os.Bundle
 import android.widget.Button
+import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.crypticsystems.nearbyshare.NearbyCore
+import java.net.NetworkInterface
 
 /**
- * Demo host: runs the native crypto/session smoke test on device.
- *
- * Uses the stable C ABI via [NearbyCore] (no UniFFI generate required).
+ * Demo: on-device smoke + two-phone LAN handshake over TCP.
  */
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -17,35 +17,75 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         val status = findViewById<TextView>(R.id.statusText)
-        val button = findViewById<Button>(R.id.smokeButton)
+        val smokeButton = findViewById<Button>(R.id.smokeButton)
+        val hostButton = findViewById<Button>(R.id.hostButton)
+        val joinButton = findViewById<Button>(R.id.joinButton)
+        val nameInput = findViewById<EditText>(R.id.nameInput)
+        val hostInput = findViewById<EditText>(R.id.hostInput)
 
-        status.text = "Tap the button to run the native core smoke test."
+        status.text = "Local IPs:\n${localIpv4List()}\n\nSmoke test or Host/Join on the same Wi‑Fi."
 
-        button.setOnClickListener {
-            status.text = "Running…"
-            button.isEnabled = false
-            Thread {
-                val result = runSmoke()
-                runOnUiThread {
-                    status.text = result
-                    button.isEnabled = true
-                }
-            }.start()
+        smokeButton.setOnClickListener {
+            runBg(smokeButton, status) {
+                val report = NearbyCore.smokeTest()
+                if (report.startsWith("OK")) "Smoke passed\n\n$report" else "Smoke failed\n\n$report"
+            }
+        }
+
+        hostButton.setOnClickListener {
+            val name = nameInput.text?.toString()?.ifBlank { "Host" } ?: "Host"
+            runBg(hostButton, status) {
+                "Hosting on port ${LanLink.DEFAULT_PORT}…\nIPs:\n${localIpv4List()}\n\n" +
+                    LanLink.hostOnce(name)
+            }
+        }
+
+        joinButton.setOnClickListener {
+            val name = nameInput.text?.toString()?.ifBlank { "Client" } ?: "Client"
+            val host = hostInput.text?.toString()?.trim().orEmpty()
+            if (host.isEmpty()) {
+                status.text = "Enter the host phone IP first."
+                return@setOnClickListener
+            }
+            runBg(joinButton, status) {
+                LanLink.connectOnce(host, LanLink.DEFAULT_PORT, name)
+            }
         }
     }
 
-    private fun runSmoke(): String {
-        return try {
-            val report = NearbyCore.smokeTest()
-            if (report.startsWith("OK")) {
-                "Native smoke test passed\n\n$report"
-            } else {
-                "Native smoke test failed\n\n$report"
+    private fun runBg(button: Button, status: TextView, block: () -> String) {
+        button.isEnabled = false
+        status.text = "Working…"
+        Thread {
+            val result = try {
+                block()
+            } catch (t: Throwable) {
+                "Error: ${t.javaClass.simpleName}: ${t.message}\n\n${t.stackTraceToString().take(1200)}"
             }
-        } catch (t: Throwable) {
-            "Failed to run native smoke test:\n${t.javaClass.simpleName}: ${t.message}\n\n" +
-                "Ensure CI/native build produced libnearby_share.so for this ABI.\n" +
-                t.stackTraceToString().take(1500)
+            runOnUiThread {
+                status.text = result
+                button.isEnabled = true
+            }
+        }.start()
+    }
+
+    private fun localIpv4List(): String {
+        val ips = mutableListOf<String>()
+        try {
+            val en = NetworkInterface.getNetworkInterfaces()
+            while (en.hasMoreElements()) {
+                val ni = en.nextElement()
+                if (!ni.isUp || ni.isLoopback) continue
+                val addrs = ni.inetAddresses
+                while (addrs.hasMoreElements()) {
+                    val a = addrs.nextElement()
+                    if (!a.isLoopbackAddress && a.hostAddress?.contains(':') == false) {
+                        ips += "${ni.name}: ${a.hostAddress}"
+                    }
+                }
+            }
+        } catch (_: Exception) {
         }
+        return if (ips.isEmpty()) "(none found)" else ips.joinToString("\n")
     }
 }
