@@ -112,12 +112,10 @@ fn run_smoke() -> Result<String, String> {
     }
 
     let sealed = alice
-        .seal(b"nearby-share-ping")
+        .seal(b"warpair-ping")
         .map_err(|e| format!("seal: {e}"))?;
-    let opened = bob
-        .open(&sealed)
-        .map_err(|e| format!("open: {e}"))?;
-    if opened != b"nearby-share-ping" {
+    let opened = bob.open(&sealed).map_err(|e| format!("open: {e}"))?;
+    if opened != b"warpair-ping" {
         return Err("decrypt mismatch".into());
     }
 
@@ -239,7 +237,7 @@ pub extern "C" fn nearby_c_session_pin(handle: i64, out: *mut u8, out_len: usize
 pub extern "C" fn nearby_c_session_peer_name(handle: i64, out: *mut u8, out_len: usize) -> i32 {
     let guard = match store().lock() {
         Ok(g) => g,
-        Err(_) => return -1,
+        Err(_) => return -3,
     };
     let Some(session) = guard.map.get(&handle) else {
         return -3;
@@ -324,8 +322,6 @@ pub extern "C" fn nearby_c_frame_encode(
 }
 
 /// Try decode one frame from `buf`. Writes payload to `out`.
-/// Returns payload length, or 0 if incomplete, or negative on error.
-/// Writes bytes consumed into `consumed_out` (single i32) when non-null.
 #[no_mangle]
 pub extern "C" fn nearby_c_frame_try_decode(
     buf: *const u8,
