@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.crypticsystems.nearbyshare"
+    namespace = "com.crypticsystems.warpair.core"
     compileSdk = 35
 
     defaultConfig {
@@ -33,7 +33,6 @@ android {
 
     packaging {
         jniLibs {
-            // JNA needs to map .so files; keep them extractable.
             useLegacyPackaging = true
         }
     }
