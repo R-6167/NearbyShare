@@ -1,9 +1,9 @@
 package com.crypticsystems.nearbyshare.demo
 
 import com.crypticsystems.nearbyshare.NearbyCore
-import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.io.InputStream
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -12,14 +12,14 @@ import java.nio.ByteOrder
 import java.util.UUID
 
 /**
- * TCP + session + protocol file transfer.
- *
- * [onProgress] is invoked from the worker thread (bytesDone, totalBytes, phase).
+ * TCP + session + protocol file transfer with disk streaming on receive
+ * and optional InputStream send (no full-file byte[] required).
  */
 object LanLink {
     const val DEFAULT_PORT = 19730
-    private const val CHUNK = 32 * 1024
-    private const val MAX_BYTES = 64L * 1024 * 1024
+    private const val CHUNK = 64 * 1024
+    /** Soft cap for a single transfer (2 GiB). */
+    private const val MAX_BYTES = 2L * 1024 * 1024 * 1024 - 1
 
     fun interface Progress {
         fun onProgress(bytesDone: Long, totalBytes: Long, phase: String)
@@ -44,7 +44,7 @@ object LanLink {
         deviceName: String,
         port: Int = DEFAULT_PORT,
         onProgress: Progress? = null,
-        onReceived: (fileName: String, data: ByteArray) -> String,
+        openSink: (fileName: String) -> IncomingFileSink,
     ): String {
         onProgress?.onProgress(0, 0, "listening")
         ServerSocket(port).use { server ->
@@ -57,9 +57,10 @@ object LanLink {
                     deviceName = deviceName,
                     initiator = false,
                     fileName = null,
-                    fileBytes = null,
+                    fileSize = -1,
+                    inputStream = null,
                     onProgress = onProgress,
-                    onReceived = onReceived,
+                    openSink = openSink,
                 )
             }
         }
@@ -70,13 +71,12 @@ object LanLink {
         port: Int,
         deviceName: String,
         fileName: String,
-        fileBytes: ByteArray,
+        fileSize: Long,
+        inputStream: InputStream,
         onProgress: Progress? = null,
     ): String {
-        require(fileBytes.size.toLong() <= MAX_BYTES) {
-            "File too large for demo (${fileBytes.size} > $MAX_BYTES)"
-        }
-        onProgress?.onProgress(0, fileBytes.size.toLong(), "connecting")
+        require(fileSize < 0 || fileSize <= MAX_BYTES) { "File too large: $fileSize" }
+        onProgress?.onProgress(0, fileSize.coerceAtLeast(0), "connecting")
         val socket = Socket()
         socket.soTimeout = 120_000
         socket.connect(InetSocketAddress(host, port), 20_000)
@@ -86,9 +86,10 @@ object LanLink {
                 deviceName = deviceName,
                 initiator = true,
                 fileName = fileName,
-                fileBytes = fileBytes,
+                fileSize = fileSize,
+                inputStream = inputStream,
                 onProgress = onProgress,
-                onReceived = null,
+                openSink = null,
             )
         }
     }
@@ -98,9 +99,10 @@ object LanLink {
         deviceName: String,
         initiator: Boolean,
         fileName: String?,
-        fileBytes: ByteArray?,
+        fileSize: Long,
+        inputStream: InputStream?,
         onProgress: Progress?,
-        onReceived: ((String, ByteArray) -> String)?,
+        openSink: ((String) -> IncomingFileSink)?,
     ): String {
         val input = DataInputStream(socket.getInputStream())
         val output = DataOutputStream(socket.getOutputStream())
@@ -121,11 +123,13 @@ object LanLink {
             onProgress?.onProgress(0, 0, "established pin=$pin")
 
             if (initiator) {
-                require(fileName != null && fileBytes != null)
-                return sendFile(session, input, output, peer, pin, fileName, fileBytes, onProgress)
+                require(fileName != null && inputStream != null)
+                return sendFile(
+                    session, input, output, peer, pin, fileName, fileSize, inputStream, onProgress,
+                )
             }
-            require(onReceived != null)
-            return receiveFile(session, input, output, peer, pin, onProgress, onReceived)
+            require(openSink != null)
+            return receiveFile(session, input, output, peer, pin, onProgress, openSink)
         }
     }
 
@@ -144,44 +148,62 @@ object LanLink {
         peer: String,
         pin: String,
         fileName: String,
-        fileBytes: ByteArray,
+        fileSize: Long,
+        stream: InputStream,
         onProgress: Progress?,
     ): String {
         val sessionId = "xfer-${UUID.randomUUID().toString().take(8)}"
-        val total = fileBytes.size.toLong()
-        onProgress?.onProgress(0, total, "offer")
-        sendSealed(session, output, NearbyCore.encodeOffer(sessionId, fileName, total))
+        // If size unknown (-1), we still stream; offer uses 0 and size_match is soft.
+        val offerSize = if (fileSize >= 0) fileSize else 0L
+        onProgress?.onProgress(0, offerSize, "offer")
+        sendSealed(session, output, NearbyCore.encodeOffer(sessionId, fileName, offerSize))
 
         val respPlain = readSealed(session, input)
         require(NearbyCore.msgTag(respPlain) == 3) { "expected Response" }
         require(NearbyCore.parseResponseAccepted(respPlain)) { "peer rejected offer" }
 
-        var offset = 0
+        val hasher = NearbyCore.newHasher()
+        val buf = ByteArray(CHUNK)
+        var sent = 0L
         var seq = 0L
-        while (offset < fileBytes.size) {
-            val end = minOf(offset + CHUNK, fileBytes.size)
-            val slice = fileBytes.copyOfRange(offset, end)
-            val last = end >= fileBytes.size
-            sendSealed(
-                session,
-                output,
-                NearbyCore.encodeChunk(sessionId, 1, seq, slice, last),
-            )
-            offset = end
-            seq++
-            onProgress?.onProgress(offset.toLong(), total, "sending")
+        stream.use { src ->
+            while (true) {
+                val n = src.read(buf)
+                if (n < 0) break
+                if (n == 0) continue
+                val slice = if (n == buf.size) buf else buf.copyOf(n)
+                hasher.update(slice)
+                val last = false // real last after loop
+                // We don't know last until EOF; buffer one chunk lag is complex — send with isLast=false then empty last
+                sendSealed(
+                    session,
+                    output,
+                    NearbyCore.encodeChunk(sessionId, 1, seq, slice, false),
+                )
+                sent += n
+                seq++
+                onProgress?.onProgress(sent, offerSize, "sending")
+                if (fileSize >= 0 && sent > fileSize) error("sent more than declared size")
+            }
         }
+        // Final empty chunk marks end of file (compatible with is_last protocol).
+        sendSealed(
+            session,
+            output,
+            NearbyCore.encodeChunk(sessionId, 1, seq, ByteArray(0), true),
+        )
+        seq++
 
-        val hash = NearbyCore.hash(fileBytes)
+        val hash = hasher.finalizeHash()
         sendSealed(session, output, NearbyCore.encodeComplete(sessionId, hash))
-        onProgress?.onProgress(total, total, "complete")
+        onProgress?.onProgress(sent, offerSize, "complete")
 
         return buildString {
             appendLine("TRANSFER OK (sender)")
             appendLine("peer=$peer")
             appendLine("pin=$pin")
             appendLine("file=$fileName")
-            appendLine("bytes=${fileBytes.size}")
+            appendLine("bytes=$sent")
             appendLine("chunks=$seq")
         }
     }
@@ -193,50 +215,62 @@ object LanLink {
         peer: String,
         pin: String,
         onProgress: Progress?,
-        onReceived: (String, ByteArray) -> String,
+        openSink: (String) -> IncomingFileSink,
     ): String {
         val offerPlain = readSealed(session, input)
         require(NearbyCore.msgTag(offerPlain) == 2) { "expected Offer" }
         val offer = NearbyCore.parseOffer(offerPlain)
-        require(offer.size <= MAX_BYTES) { "Offer too large: ${offer.size}" }
+        if (offer.size > 0) {
+            require(offer.size <= MAX_BYTES) { "Offer too large: ${offer.size}" }
+        }
 
         onProgress?.onProgress(0, offer.size, "accepted ${offer.fileName}")
         sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, true))
 
-        val buf = ByteArrayOutputStream()
+        val sink = openSink(offer.fileName)
+        val hasher = NearbyCore.newHasher()
         var chunks = 0
-        while (true) {
-            val plain = readSealed(session, input)
-            when (NearbyCore.msgTag(plain)) {
-                5 -> {
-                    val chunk = NearbyCore.parseChunk(plain)
-                    require(buf.size().toLong() + chunk.data.size <= MAX_BYTES) { "exceeded max size" }
-                    buf.write(chunk.data)
-                    chunks++
-                    onProgress?.onProgress(buf.size().toLong(), offer.size, "receiving")
+        try {
+            while (true) {
+                val plain = readSealed(session, input)
+                when (NearbyCore.msgTag(plain)) {
+                    5 -> {
+                        val chunk = NearbyCore.parseChunk(plain)
+                        if (chunk.data.isNotEmpty()) {
+                            sink.write(chunk.data)
+                            hasher.update(chunk.data)
+                        }
+                        chunks++
+                        onProgress?.onProgress(sink.bytesWritten, offer.size, "receiving → ${sink.category.folderName}")
+                        if (chunk.isLast) {
+                            // still expect Complete, keep reading
+                        }
+                    }
+                    7 -> break
+                    else -> error("unexpected tag ${NearbyCore.msgTag(plain)}")
                 }
-                7 -> break
-                else -> error("unexpected tag ${NearbyCore.msgTag(plain)}")
             }
-        }
+            val digest = hasher.finalizeHash()
+            val save = sink.finish()
+            val okSize = offer.size <= 0 || save.bytes == offer.size
+            onProgress?.onProgress(save.bytes, offer.size, "complete")
 
-        val data = buf.toByteArray()
-        val digest = NearbyCore.hash(data)
-        val okSize = data.size.toLong() == offer.size
-        onProgress?.onProgress(data.size.toLong(), offer.size, "saving")
-        val saveSummary = onReceived(offer.fileName, data)
-        onProgress?.onProgress(data.size.toLong(), offer.size, "complete")
-
-        return buildString {
-            appendLine("TRANSFER OK (receiver)")
-            appendLine("peer=$peer")
-            appendLine("pin=$pin")
-            appendLine("file=${offer.fileName}")
-            appendLine("bytes=${data.size}")
-            appendLine("size_match=$okSize")
-            appendLine("chunks=$chunks")
-            appendLine("blake3_prefix=${digest.take(4).joinToString("") { "%02x".format(it) }}")
-            append(saveSummary)
+            return buildString {
+                appendLine("TRANSFER OK (receiver)")
+                appendLine("peer=$peer")
+                appendLine("pin=$pin")
+                appendLine("file=${offer.fileName}")
+                appendLine("category=${save.category.folderName}")
+                appendLine("bytes=${save.bytes}")
+                appendLine("size_match=$okSize")
+                appendLine("chunks=$chunks")
+                appendLine("blake3_prefix=${digest.take(4).joinToString("") { "%02x".format(it) }}")
+                append(save.summary())
+            }
+        } catch (t: Throwable) {
+            hasher.close()
+            sink.abort()
+            throw t
         }
     }
 }
