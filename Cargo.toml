@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/nearby-share",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["mosescryptic"]
+repository = "https://github.com/mosescryptic/NearbyShare"
+
+[workspace.dependencies]
+# Shared dependency versions will go here later
