@@ -11,10 +11,11 @@ Phase 0 → early Phase 1 foundation.
 - Secure session handshake + AEAD channel + length framing
 - Binary protocol codec (`Message` encode/decode)
 - Transfer session state machine
-- **UniFFI surface** for Kotlin / Swift (`FfiIdentity`, `FfiSession`, …)
+- UniFFI surface for Kotlin / Swift
+- **Android Gradle project** (`android/`) with demo app + library module
 
 See **[docs/DESIGN.md](docs/DESIGN.md)** for architecture and roadmap.  
-See **[docs/FFI.md](docs/FFI.md)** for binding generation and the exported API.
+See **[docs/FFI.md](docs/FFI.md)** and **[android/README.md](android/README.md)** for bindings and Gradle.
 
 ## Goals
 
@@ -28,19 +29,10 @@ See **[docs/FFI.md](docs/FFI.md)** for binding generation and the exported API.
 
 ```
 NearbyShare/
-├── crates/nearby-share/
-│   ├── src/
-│   │   ├── api.rs         # UniFFI-exported surface
-│   │   ├── crypto.rs      # X25519, AEAD, BLAKE3, PIN
-│   │   ├── discovery.rs
-│   │   ├── protocol.rs    # Messages + binary codec
-│   │   ├── session.rs     # Handshake + secure channel
-│   │   ├── transfer.rs
-│   │   └── lib.rs
-│   └── uniffi.toml
+├── crates/nearby-share/     # Rust core + UniFFI API
+├── android/                 # Gradle: :nearbyshare library + :app demo
+├── scripts/build-android-native.sh
 ├── docs/
-│   ├── DESIGN.md
-│   └── FFI.md
 ├── Cargo.toml
 └── rust-toolchain.toml
 ```
@@ -51,17 +43,15 @@ NearbyShare/
 git clone https://github.com/Cryptic-Systems/NearbyShare.git
 cd NearbyShare
 cargo test
-cargo build -p nearby-share --release
 ```
 
-Generate Kotlin bindings (see [docs/FFI.md](docs/FFI.md)):
+### Android
 
 ```bash
+cargo install cargo-ndk
 cargo install uniffi-bindgen --version 0.28.3
-uniffi-bindgen generate \
-  --library target/release/libnearby_share.so \
-  --language kotlin \
-  --out-dir bindings/kotlin
+./scripts/build-android-native.sh
+# Open android/ in Android Studio → Run 'app'
 ```
 
 ## License
