@@ -1,30 +1,114 @@
 package com.crypticsystems.nearbyshare.demo
 
-import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
-import android.os.Build
-import android.os.Environment
-import android.provider.MediaStore
 import android.provider.OpenableColumns
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
+
+enum class FileCategory(val folderName: String) {
+    Music("Music"),
+    Videos("Videos"),
+    Images("Images"),
+    Documents("Documents"),
+    Archives("Archives"),
+    Other("Other"),
+}
 
 data class PickedFile(
     val displayName: String,
-    val bytes: ByteArray,
+    val size: Long,
     val uri: Uri,
 )
 
-object ReceivedFiles {
-    private const val DIR_NAME = "NearbyShare"
+data class SaveResult(
+    val appPath: String,
+    val category: FileCategory,
+    val fileName: String,
+    val bytes: Long,
+) {
+    fun summary(): String = buildString {
+        appendLine("category=${category.folderName}")
+        appendLine("saved_as=$fileName")
+        appendLine("app_path=$appPath")
+        appendLine("bytes=$bytes")
+    }
+}
 
-    /** Read a SAF document into memory (demo-sized files). */
-    fun readPicked(context: Context, uri: Uri): PickedFile {
+/**
+ * App-private library:
+ *
+ * ```
+ * Android/data/<pkg>/files/NearbyShare/
+ *   Music/ Videos/ Images/ Documents/ Archives/ Other/
+ * ```
+ *
+ * Received files stream directly into the matching category folder.
+ */
+object ReceivedFiles {
+    const val ROOT_NAME = "NearbyShare"
+
+    fun rootDir(context: Context): File {
+        val root = File(context.getExternalFilesDir(null), ROOT_NAME)
+        root.mkdirs()
+        return root
+    }
+
+    /** Create category folders if missing. */
+    fun ensureLibrary(context: Context): File {
+        val root = rootDir(context)
+        FileCategory.entries.forEach { cat ->
+            File(root, cat.folderName).mkdirs()
+        }
+        return root
+    }
+
+    fun categoryFor(fileName: String): FileCategory {
+        val lower = fileName.lowercase()
+        val ext = lower.substringAfterLast('.', missingDelimiterValue = "")
+        return when (ext) {
+            "mp3", "m4a", "aac", "wav", "flac", "ogg", "opus", "wma" -> FileCategory.Music
+            "mp4", "mkv", "webm", "avi", "mov", "m4v", "3gp" -> FileCategory.Videos
+            "jpg", "jpeg", "png", "gif", "webp", "heic", "bmp", "svg" -> FileCategory.Images
+            "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+            "txt", "rtf", "csv", "md", "json", "xml", "epub",
+            -> FileCategory.Documents
+            "zip", "rar", "7z", "tar", "gz", "tgz", "apk" -> FileCategory.Archives
+            else -> FileCategory.Other
+        }
+    }
+
+    fun categoryDir(context: Context, category: FileCategory): File {
+        val dir = File(rootDir(context), category.folderName)
+        dir.mkdirs()
+        return dir
+    }
+
+    fun readPickedMeta(context: Context, uri: Uri): PickedFile {
         val name = queryDisplayName(context, uri) ?: "file.bin"
-        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        val size = querySize(context, uri)
+        return PickedFile(name, size, uri)
+    }
+
+    fun openPickedStream(context: Context, uri: Uri): InputStream {
+        return context.contentResolver.openInputStream(uri)
             ?: error("Cannot open selected file")
-        return PickedFile(name, bytes, uri)
+    }
+
+    /**
+     * Open a unique destination file in the right category and return a streaming sink.
+     * Chunks should be [IncomingFileSink.write]n then [IncomingFileSink.finish].
+     */
+    fun openIncoming(context: Context, fileName: String): IncomingFileSink {
+        ensureLibrary(context)
+        val safe = sanitizeFileName(fileName)
+        val category = categoryFor(safe)
+        val dir = categoryDir(context, category)
+        val file = uniqueFile(dir, safe)
+        val out = FileOutputStream(file)
+        return IncomingFileSink(file, category, safe, out)
     }
 
     private fun queryDisplayName(context: Context, uri: Uri): String? {
@@ -38,60 +122,16 @@ object ReceivedFiles {
         return uri.lastPathSegment
     }
 
-    /**
-     * Save received bytes under app files and, when possible, public Downloads/NearbyShare
-     * via MediaStore (no legacy storage permission required on API 29+).
-     */
-    fun saveReceived(context: Context, fileName: String, data: ByteArray): SaveResult {
-        val safeName = sanitizeFileName(fileName)
-
-        val appDir = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), DIR_NAME)
-            .also { it.mkdirs() }
-        val appFile = uniqueFile(appDir, safeName)
-        FileOutputStream(appFile).use { it.write(data) }
-
-        var publicUri: Uri? = null
-        var publicPathHint: String? = null
-        try {
-            publicUri = insertIntoDownloads(context, safeName, data)
-            if (publicUri != null) {
-                publicPathHint = "Downloads/$DIR_NAME/$safeName"
+    private fun querySize(context: Context, uri: Uri): Long {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)
+            ?.use { c ->
+                if (c.moveToFirst()) {
+                    val idx = c.getColumnIndex(OpenableColumns.SIZE)
+                    if (idx >= 0 && !c.isNull(idx)) return c.getLong(idx)
+                }
             }
-        } catch (_: Exception) {
-            // App-private path is enough for the demo.
-        }
-
-        return SaveResult(
-            appPath = appFile.absolutePath,
-            publicUri = publicUri?.toString(),
-            publicPathHint = publicPathHint,
-            bytes = data.size,
-            fileName = safeName,
-        )
-    }
-
-    private fun insertIntoDownloads(context: Context, fileName: String, data: ByteArray): Uri? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-            // Pre-Q: write under app external files only (already done).
-            return null
-        }
-        val values = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
-            put(MediaStore.Downloads.MIME_TYPE, guessMime(fileName))
-            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/$DIR_NAME")
-            put(MediaStore.Downloads.IS_PENDING, 1)
-        }
-        val resolver = context.contentResolver
-        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return null
-        resolver.openOutputStream(uri)?.use { it.write(data) }
-            ?: run {
-                resolver.delete(uri, null, null)
-                return null
-            }
-        values.clear()
-        values.put(MediaStore.Downloads.IS_PENDING, 0)
-        resolver.update(uri, values, null, null)
-        return uri
+        // Fallback: unknown size
+        return -1L
     }
 
     private fun uniqueFile(dir: File, name: String): File {
@@ -112,33 +152,38 @@ object ReceivedFiles {
         val cleaned = name.replace(Regex("[\\/:*?\"<>|]"), "_").trim()
         return cleaned.ifBlank { "received.bin" }
     }
-
-    private fun guessMime(name: String): String {
-        val lower = name.lowercase()
-        return when {
-            lower.endsWith(".txt") -> "text/plain"
-            lower.endsWith(".pdf") -> "application/pdf"
-            lower.endsWith(".png") -> "image/png"
-            lower.endsWith(".jpg") || lower.endsWith(".jpeg") -> "image/jpeg"
-            lower.endsWith(".mp4") -> "video/mp4"
-            lower.endsWith(".zip") -> "application/zip"
-            else -> "application/octet-stream"
-        }
-    }
 }
 
-data class SaveResult(
-    val appPath: String,
-    val publicUri: String?,
-    val publicPathHint: String?,
-    val bytes: Int,
+class IncomingFileSink(
+    val file: File,
+    val category: FileCategory,
     val fileName: String,
+    private val out: OutputStream,
 ) {
-    fun summary(): String = buildString {
-        appendLine("saved_as=$fileName")
-        appendLine("app_path=$appPath")
-        if (publicPathHint != null) appendLine("downloads=$publicPathHint")
-        if (publicUri != null) appendLine("content_uri=$publicUri")
-        appendLine("bytes=$bytes")
+    var bytesWritten: Long = 0
+        private set
+
+    fun write(chunk: ByteArray) {
+        out.write(chunk)
+        bytesWritten += chunk.size
+    }
+
+    fun finish(): SaveResult {
+        out.flush()
+        out.close()
+        return SaveResult(
+            appPath = file.absolutePath,
+            category = category,
+            fileName = fileName,
+            bytes = bytesWritten,
+        )
+    }
+
+    fun abort() {
+        try {
+            out.close()
+        } catch (_: Exception) {
+        }
+        file.delete()
     }
 }
