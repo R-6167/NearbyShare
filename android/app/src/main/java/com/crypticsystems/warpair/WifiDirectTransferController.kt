@@ -20,9 +20,9 @@ object WifiDirectTransferController {
         onProgress: LanLink.Progress? = null,
         onPinConfirm: LanLink.PinConfirm,
         onOffer: LanLink.OfferDecision,
-        onStatus: (String) -> Unit = {},
+        statusCallback: (String) -> Unit = {},
     ): String {
-        val connection = awaitGroup(adapter, onStatus) { adapter.createGroup() }
+        val connection = awaitGroup(adapter, statusCallback) { adapter.createGroup() }
         require(connection.isGroupOwner) {
             "Wi-Fi Direct group formed, but this device is not the group owner. Join from the other device."
         }
@@ -46,9 +46,9 @@ object WifiDirectTransferController {
         control: LanLink.TransferControl = LanLink.TransferControl(),
         onProgress: LanLink.Progress? = null,
         onPinConfirm: LanLink.PinConfirm,
-        onStatus: (String) -> Unit = {},
+        statusCallback: (String) -> Unit = {},
     ): String {
-        val connection = awaitGroup(adapter, onStatus) {
+        val connection = awaitGroup(adapter, statusCallback) {
             adapter.connect(peerAddress)
         }
         require(!connection.isGroupOwner) {
@@ -85,7 +85,7 @@ object WifiDirectTransferController {
             }
 
             override fun onStatus(message: String) {
-                onStatus(message)
+                statusCallback(message)
                 if (message.contains("failed", ignoreCase = true) ||
                     message.contains("denied", ignoreCase = true) ||
                     message.contains("error", ignoreCase = true) ||
