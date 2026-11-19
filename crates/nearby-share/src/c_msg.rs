@@ -136,6 +136,31 @@ pub extern "C" fn nearby_c_msg_encode_complete(
     write_bytes(out, out_len, &msg.encode())
 }
 
+/// Encode Cancel message (`reason` optional, pass null/0 for none).
+#[no_mangle]
+pub extern "C" fn nearby_c_msg_encode_cancel(
+    session_id_ptr: *const u8,
+    session_id_len: usize,
+    reason_ptr: *const u8,
+    reason_len: usize,
+    out: *mut u8,
+    out_len: usize,
+) -> i32 {
+    let Some(session_id) = read_str(session_id_ptr, session_id_len) else {
+        return -1;
+    };
+    let reason = if reason_len == 0 || reason_ptr.is_null() {
+        None
+    } else {
+        read_str(reason_ptr, reason_len)
+    };
+    let msg = Message::Cancel {
+        session_id,
+        reason,
+    };
+    write_bytes(out, out_len, &msg.encode())
+}
+
 #[no_mangle]
 pub extern "C" fn nearby_c_msg_tag(data_ptr: *const u8, data_len: usize) -> i32 {
     if data_ptr.is_null() || data_len == 0 {
@@ -155,7 +180,6 @@ pub extern "C" fn nearby_c_msg_tag(data_ptr: *const u8, data_len: usize) -> i32 
     }
 }
 
-/// Parse Offer. Writes session id / name bytes and their lengths.
 #[no_mangle]
 pub extern "C" fn nearby_c_msg_parse_offer(
     data_ptr: *const u8,
