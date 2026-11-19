@@ -3,6 +3,7 @@
 //! This crate contains the platform-agnostic logic:
 //! - Device identity & cryptography
 //! - Discovery abstractions
+//! - Secure session (handshake + AEAD channel)
 //! - Protocol messages
 //! - Transfer session management
 //!
@@ -15,6 +16,7 @@
 pub mod crypto;
 pub mod discovery;
 pub mod protocol;
+pub mod session;
 pub mod transfer;
 
 // Re-export the most commonly used types at the crate root for convenience.
@@ -24,6 +26,7 @@ pub use crypto::{
 };
 pub use discovery::{DiscoveryError, DiscoveryEvent, DiscoveryService, Peer};
 pub use protocol::{FileInfo, Medium, Message, PROTOCOL_VERSION};
+pub use session::{framing, HelloPayload, Role, SecureSession, SessionError, SessionPhase};
 pub use transfer::{TransferDirection, TransferSession, TransferState};
 
 /// Library version.
@@ -50,25 +53,35 @@ mod tests {
     }
 
     #[test]
-    fn end_to_end_identity_and_session_smoke() {
-        let alice = DeviceIdentity::generate_ephemeral("Alice");
-        let bob = DeviceIdentity::generate_ephemeral("Bob");
+    fn end_to_end_secure_session_and_transfer_smoke() {
+        let alice_id = DeviceIdentity::generate_ephemeral("Alice");
+        let bob_id = DeviceIdentity::generate_ephemeral("Bob");
 
-        let secrets_a = perform_key_exchange(&alice, bob.public_key());
-        let secrets_b = perform_key_exchange(&bob, alice.public_key());
+        let mut alice = SecureSession::new(
+            alice_id,
+            Role::Initiator,
+            vec![Medium::WifiLan, Medium::Ble],
+        );
+        let mut bob = SecureSession::new(
+            bob_id,
+            Role::Responder,
+            vec![Medium::WifiLan, Medium::SoftAp],
+        );
 
-        // Symmetric root + swapped directional keys
-        assert_eq!(secrets_a.root, secrets_b.root);
-        assert_eq!(secrets_a.send_key, secrets_b.recv_key);
+        let a_hello = alice.begin_handshake().unwrap();
+        let b_hello = bob.begin_handshake().unwrap();
+        alice.complete_handshake(&b_hello).unwrap();
+        bob.complete_handshake(&a_hello).unwrap();
 
-        let pin = derive_pin(&secrets_a);
-        assert_eq!(pin.len(), 4);
+        assert_eq!(alice.pin(), bob.pin());
+        assert_eq!(alice.negotiated_mediums(), vec![Medium::WifiLan]);
 
-        // Encrypt with Alice's send key, decrypt with Bob's recv key
-        let sealed = encrypt(&secrets_a.send_key, b"hello peer").expect("encrypt");
-        let opened = decrypt(&secrets_b.recv_key, &sealed).expect("decrypt");
-        assert_eq!(opened, b"hello peer");
+        // Encrypted application data
+        let frame = framing::encode_frame(&alice.seal(b"chunk-0").unwrap());
+        let (payload, _) = framing::try_decode_frame(&frame).unwrap();
+        assert_eq!(bob.open(&payload).unwrap(), b"chunk-0");
 
+        // Transfer state machine still works independently
         let files = vec![FileInfo {
             file_id: 1,
             name: "photo.jpg".into(),
@@ -76,14 +89,15 @@ mod tests {
             mime_type: Some("image/jpeg".into()),
             relative_path: None,
         }];
-
-        let mut session =
-            TransferSession::new_outgoing("sess-1".into(), bob.fingerprint().into(), files);
-        assert!(session.is_active());
-        session.accept();
-        session.start(Some(Medium::WifiLan));
-        session.update_progress(512_000, 0);
-        session.complete();
-        assert!(!session.is_active());
+        let mut transfer = TransferSession::new_outgoing(
+            "sess-1".into(),
+            bob.peer_fingerprint().unwrap().into(),
+            files,
+        );
+        transfer.accept();
+        transfer.start(Some(Medium::WifiLan));
+        transfer.update_progress(512_000, 0);
+        transfer.complete();
+        assert!(!transfer.is_active());
     }
 }
