@@ -2,6 +2,8 @@ package com.crypticsystems.nearbyshare.demo
 
 import android.content.Context
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import android.provider.OpenableColumns
 import java.io.File
 import java.io.FileOutputStream
@@ -34,16 +36,16 @@ data class SaveResult(
         appendLine("saved_as=$fileName")
         appendLine("app_path=$appPath")
         appendLine("bytes=$bytes")
-        appendLine("storage=private_internal")
+        appendLine("storage=public_NearbyShare")
     }
 }
 
 /**
- * Private app library (not public Movies/Music/Downloads).
+ * User-visible library on shared storage (not private app sandbox,
+ * not system Movies/Music/Download trees):
  *
- * Path (sandbox; not visible in normal file managers without root/debug):
  * ```
- * /data/data/<package>/files/NearbyShare/
+ * /storage/emulated/0/NearbyShare/
  *   Music/
  *   Videos/
  *   Images/
@@ -52,25 +54,30 @@ data class SaveResult(
  *   Other/
  * ```
  *
- * Uses [Context.getFilesDir], not MediaStore and not shared external storage.
+ * Requires storage / all-files access on modern Android so the top-level
+ * folder can be created and browsed in Files / USB.
  */
 object ReceivedFiles {
     const val ROOT_NAME = "NearbyShare"
 
-    fun rootDir(context: Context): File {
-        // Internal private storage only — own top-level folder under the app sandbox.
-        val root = File(context.filesDir, ROOT_NAME)
+    fun rootDir(): File {
+        val root = File(Environment.getExternalStorageDirectory(), ROOT_NAME)
         if (!root.exists()) {
             root.mkdirs()
         }
         return root
     }
 
-    /** Create category folders if missing. */
-    fun ensureLibrary(context: Context): File {
-        val root = rootDir(context)
+    fun ensureLibrary(): File {
+        val root = rootDir()
         FileCategory.entries.forEach { cat ->
             File(root, cat.folderName).mkdirs()
+        }
+        if (!root.isDirectory) {
+            error(
+                "Cannot create $ROOT_NAME on shared storage. " +
+                    "Grant “All files access” (or storage permission) and try again.",
+            )
         }
         return root
     }
@@ -90,8 +97,8 @@ object ReceivedFiles {
         }
     }
 
-    fun categoryDir(context: Context, category: FileCategory): File {
-        val dir = File(rootDir(context), category.folderName)
+    fun categoryDir(category: FileCategory): File {
+        val dir = File(rootDir(), category.folderName)
         dir.mkdirs()
         return dir
     }
@@ -107,15 +114,34 @@ object ReceivedFiles {
             ?: error("Cannot open selected file")
     }
 
-    /** Stream received chunks into the private categorized library. */
-    fun openIncoming(context: Context, fileName: String): IncomingFileSink {
-        ensureLibrary(context)
+    fun openIncoming(fileName: String): IncomingFileSink {
+        ensureLibrary()
         val safe = sanitizeFileName(fileName)
         val category = categoryFor(safe)
-        val dir = categoryDir(context, category)
+        val dir = categoryDir(category)
+        if (!dir.isDirectory) {
+            error("Cannot write to ${dir.absolutePath}. Check storage permission.")
+        }
         val file = uniqueFile(dir, safe)
         val out = FileOutputStream(file)
         return IncomingFileSink(file, category, safe, out)
+    }
+
+    fun hasWritableLibrary(): Boolean {
+        return try {
+            val root = ensureLibrary()
+            val probe = File(root, ".write_test")
+            probe.writeText("ok")
+            probe.delete()
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun needsAllFilesAccess(): Boolean {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            !Environment.isExternalStorageManager()
     }
 
     private fun queryDisplayName(context: Context, uri: Uri): String? {
