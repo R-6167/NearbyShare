@@ -14,11 +14,15 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.crypticsystems.nearbyshare.NearbyCore
 import java.io.ByteArrayInputStream
 import java.net.NetworkInterface
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : AppCompatActivity() {
     private var picked: PickedFile? = null
@@ -87,12 +91,17 @@ class MainActivity : AppCompatActivity() {
         val joinButton = findViewById<Button>(R.id.joinButton)
         val pickFileButton = findViewById<Button>(R.id.pickFileButton)
         val discoverButton = findViewById<Button>(R.id.discoverButton)
+        val libraryButton = findViewById<Button>(R.id.libraryButton)
         val nameInput = findViewById<EditText>(R.id.nameInput)
         val hostInput = findViewById<EditText>(R.id.hostInput)
         val payloadInput = findViewById<EditText>(R.id.payloadInput)
 
         ensureStorageAccess()
         refreshLibraryStatus()
+
+        libraryButton.setOnClickListener {
+            startActivity(Intent(this, LibraryActivity::class.java))
+        }
 
         pickFileButton.setOnClickListener {
             openDocument.launch(arrayOf("*/*"))
@@ -104,7 +113,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         smokeButton.setOnClickListener {
-            runBg(listOf(smokeButton, hostButton, joinButton, discoverButton), status) {
+            runBg(listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton), status) {
                 val report = NearbyCore.smokeTest()
                 if (report.startsWith("OK")) "Smoke passed\n\n$report" else "Smoke failed\n\n$report"
             }
@@ -121,11 +130,12 @@ class MainActivity : AppCompatActivity() {
             }
             val name = nameInput.text?.toString()?.ifBlank { "Host" } ?: "Host"
             nsd.advertise(name, LanLink.DEFAULT_PORT)
-            runBg(listOf(smokeButton, hostButton, joinButton, discoverButton), status) {
+            runBg(listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton), status) {
                 try {
                     LanLink.hostOnce(
                         deviceName = name,
                         onProgress = progressTo(status),
+                        onOffer = LanLink.OfferDecision { offer -> askAcceptOffer(offer) },
                         openSink = { fileName -> ReceivedFiles.openIncoming(fileName) },
                     )
                 } finally {
@@ -145,7 +155,7 @@ class MainActivity : AppCompatActivity() {
             val peerPort = nsd.currentPeers().firstOrNull { it.host == host }?.port
                 ?: LanLink.DEFAULT_PORT
 
-            runBg(listOf(smokeButton, hostButton, joinButton, discoverButton), status) {
+            runBg(listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton), status) {
                 if (localPicked != null) {
                     ReceivedFiles.openPickedStream(this@MainActivity, localPicked.uri).use { stream ->
                         LanLink.connectOnce(
@@ -177,10 +187,56 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Blocks worker thread until user accepts or rejects (or timeout). */
+    private fun askAcceptOffer(offer: LanLink.OfferRequest): Boolean {
+        val latch = CountDownLatch(1)
+        val accepted = AtomicBoolean(false)
+        val sizeLabel = if (offer.size > 0) formatSize(offer.size) else "unknown size"
+
+        mainHandler.post {
+            if (isFinishing) {
+                latch.countDown()
+                return@post
+            }
+            AlertDialog.Builder(this)
+                .setTitle("Incoming file")
+                .setMessage(
+                    "From: ${offer.peerName}\n" +
+                        "PIN: ${offer.pin}\n\n" +
+                        "File: ${offer.fileName}\n" +
+                        "Size: $sizeLabel\n" +
+                        "Save to: NearbyShare/${offer.category.folderName}/\n\n" +
+                        "Accept this transfer?",
+                )
+                .setCancelable(false)
+                .setPositiveButton("Accept") { _, _ ->
+                    accepted.set(true)
+                    latch.countDown()
+                }
+                .setNegativeButton("Reject") { _, _ ->
+                    accepted.set(false)
+                    latch.countDown()
+                }
+                .show()
+        }
+
+        // Give the user up to 2 minutes to decide.
+        val ok = latch.await(120, TimeUnit.SECONDS)
+        return ok && accepted.get()
+    }
+
+    private fun formatSize(bytes: Long): String {
+        if (bytes < 1024) return "$bytes B"
+        val kb = bytes / 1024.0
+        if (kb < 1024) return String.format("%.1f KB", kb)
+        val mb = kb / 1024.0
+        if (mb < 1024) return String.format("%.1f MB", mb)
+        return String.format("%.2f GB", mb / 1024.0)
+    }
+
     override fun onResume() {
         super.onResume()
         if (::nsd.isInitialized) {
-            // Refresh path/permission line when returning from Settings.
             refreshLibraryStatus()
         }
     }
