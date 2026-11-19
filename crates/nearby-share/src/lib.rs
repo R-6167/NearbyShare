@@ -1,6 +1,6 @@
-//! NearbyShare – Offline peer-to-peer nearby file sharing core.
+//! WarPair – Offline peer-to-peer nearby file sharing core.
 //!
-//! See `docs/DESIGN.md` in the repository root for the full architecture and roadmap.
+//! See `docs/DESIGN.md` and `docs/WARPAIR.md` for architecture and product identity.
 
 #![warn(missing_docs)]
 
@@ -39,7 +39,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Simple health-check function (useful for verifying bindings later).
 pub fn hello() -> String {
-    format!("NearbyShare core v{}", VERSION)
+    format!("WarPair core v{}", VERSION)
 }
 
 #[cfg(test)]
@@ -54,7 +54,7 @@ mod tests {
     #[test]
     fn hello_works() {
         let msg = hello();
-        assert!(msg.contains("NearbyShare"));
+        assert!(msg.contains("WarPair"));
     }
 
     #[test]
@@ -129,6 +129,6 @@ mod tests {
         assert_eq!(opened, b"ping");
 
         assert_eq!(library_version(), VERSION);
-        assert!(library_hello().contains("NearbyShare"));
+        assert!(library_hello().contains("WarPair"));
     }
 }
