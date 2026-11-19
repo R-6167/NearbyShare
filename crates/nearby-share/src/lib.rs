@@ -7,7 +7,7 @@
 //! - Protocol messages + binary codec
 //! - Transfer session management
 //! - UniFFI surface for Android / iOS (`api` module, `ffi` feature)
-//! - Stable C ABI smoke exports (`c_api`) for JNA without bindgen
+//! - Stable C ABI smoke + session + message exports for JNA
 //!
 //! See `docs/DESIGN.md` in the repository root for the full architecture and roadmap.
 
@@ -17,6 +17,7 @@
 uniffi::setup_scaffolding!();
 
 pub mod c_api;
+pub mod c_msg;
 pub mod crypto;
 pub mod discovery;
 pub mod protocol;
@@ -26,7 +27,6 @@ pub mod transfer;
 #[cfg(feature = "ffi")]
 pub mod api;
 
-// Re-export the most commonly used types at the crate root for convenience.
 pub use crypto::{
     decrypt, derive_pin, encrypt, hash_bytes, perform_key_exchange, CryptoError, DeviceIdentity,
     PublicKey, SecretKey, SessionSecrets,
