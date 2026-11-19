@@ -16,6 +16,7 @@ import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -214,15 +215,26 @@ class WifiDirectLink(context: Context) : AutoCloseable {
     fun connectToGroupOwner(host: String, port: Int = LanLink.DEFAULT_PORT, timeoutMs: Int = 12_000): TransferConnection {
         require(host.isNotBlank()) { "Wi-Fi Direct group-owner address is unavailable" }
         require(port in 1..65535)
-        val socket = Socket()
-        try {
-            socket.soTimeout = 180_000
-            socket.connect(InetSocketAddress(host, port), timeoutMs)
-            return SocketTransferConnection(socket)
-        } catch (t: Throwable) {
-            try { socket.close() } catch (_: Throwable) {}
-            throw IOException("Could not connect to Wi-Fi Direct group owner $host:$port: ${t.message}", t)
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs.toLong())
+        var lastFailure: Throwable? = null
+        while (System.nanoTime() < deadline) {
+            val socket = Socket()
+            try {
+                socket.soTimeout = 180_000
+                socket.tcpNoDelay = true
+                socket.keepAlive = true
+                socket.connect(InetSocketAddress(host, port), 1_500)
+                return SocketTransferConnection(socket)
+            } catch (t: Throwable) {
+                lastFailure = t
+                try { socket.close() } catch (_: Throwable) {}
+                try { Thread.sleep(300) } catch (interrupted: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw IOException("Interrupted while connecting to Wi-Fi Direct group owner.", interrupted)
+                }
+            }
         }
+        throw IOException("Could not connect to Wi-Fi Direct group owner $host:$port after retrying: ${lastFailure?.message}", lastFailure)
     }
 
     /** Accept one peer socket on the group owner, then hand it to LanLink. */
