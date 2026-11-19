@@ -18,7 +18,10 @@ pub mod protocol;
 pub mod transfer;
 
 // Re-export the most commonly used types at the crate root for convenience.
-pub use crypto::{derive_pin, perform_key_exchange, DeviceIdentity, SessionSecrets};
+pub use crypto::{
+    decrypt, derive_pin, encrypt, hash_bytes, perform_key_exchange, CryptoError, DeviceIdentity,
+    PublicKey, SecretKey, SessionSecrets,
+};
 pub use discovery::{DiscoveryError, DiscoveryEvent, DiscoveryService, Peer};
 pub use protocol::{FileInfo, Medium, Message, PROTOCOL_VERSION};
 pub use transfer::{TransferDirection, TransferSession, TransferState};
@@ -51,9 +54,20 @@ mod tests {
         let alice = DeviceIdentity::generate_ephemeral("Alice");
         let bob = DeviceIdentity::generate_ephemeral("Bob");
 
-        let secrets = perform_key_exchange(&alice, bob.public_key());
-        let pin = derive_pin(&secrets);
+        let secrets_a = perform_key_exchange(&alice, bob.public_key());
+        let secrets_b = perform_key_exchange(&bob, alice.public_key());
+
+        // Symmetric root + swapped directional keys
+        assert_eq!(secrets_a.root, secrets_b.root);
+        assert_eq!(secrets_a.send_key, secrets_b.recv_key);
+
+        let pin = derive_pin(&secrets_a);
         assert_eq!(pin.len(), 4);
+
+        // Encrypt with Alice's send key, decrypt with Bob's recv key
+        let sealed = encrypt(&secrets_a.send_key, b"hello peer").expect("encrypt");
+        let opened = decrypt(&secrets_b.recv_key, &sealed).expect("decrypt");
+        assert_eq!(opened, b"hello peer");
 
         let files = vec![FileInfo {
             file_id: 1,
