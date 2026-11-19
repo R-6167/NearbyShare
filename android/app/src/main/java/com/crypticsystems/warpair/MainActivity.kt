@@ -436,7 +436,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun localIpv4List(): String {
-        val ips = mutableListOf<String>()
+        val addresses = mutableListOf<Pair<String, String>>()
         try {
             val en = NetworkInterface.getNetworkInterfaces()
             while (en.hasMoreElements()) {
@@ -444,14 +444,25 @@ class MainActivity : AppCompatActivity() {
                 if (!ni.isUp || ni.isLoopback) continue
                 val addrs = ni.inetAddresses
                 while (addrs.hasMoreElements()) {
-                    val a = addrs.nextElement()
-                    if (!a.isLoopbackAddress && a.hostAddress?.contains(':') == false) {
-                        ips += "${ni.name}: ${a.hostAddress}"
+                    val address = addrs.nextElement()
+                    val host = address.hostAddress
+                    if (!address.isLoopbackAddress && host?.contains(':') == false) {
+                        addresses += ni.name to host
                     }
                 }
             }
         } catch (_: Exception) {
         }
+        fun priority(name: String): Int {
+            val n = name.lowercase()
+            return when {
+                n.contains("softap") || n.contains("ap") || n.contains("wlan") || n.contains("swlan") -> 0
+                n.contains("eth") -> 1
+                else -> 2
+            }
+        }
+        val ips = addresses.sortedBy { priority(it.first) }
+            .map { "${it.first}: ${it.second}" }
         return if (ips.isEmpty()) "(none)" else ips.joinToString("\n")
     }
 }
