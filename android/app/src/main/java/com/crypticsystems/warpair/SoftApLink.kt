@@ -17,12 +17,12 @@ class SoftApLink(context: Context) {
     data class Credentials(
         val ssid: String,
         val password: String,
-        /** Best-effort host address on the SoftAP subnet (often 192.168.43.1 / 192.168.49.1). */
+        /** Best-effort host address on the SoftAP subnet. */
         val suggestedHostIp: String,
     )
 
     private val app = context.applicationContext
-    private val wifi = app.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+    private val wifi = app.getSystemService(Context.WIFI_SERVICE) as WifiManager
     private var reservation: WifiManager.LocalOnlyHotspotReservation? = null
 
     fun startBlocking(timeoutSec: Long = 20): Credentials {
@@ -41,13 +41,12 @@ class SoftApLink(context: Context) {
                     object : WifiManager.LocalOnlyHotspotCallback() {
                         override fun onStarted(res: WifiManager.LocalOnlyHotspotReservation) {
                             reservation = res
-                            val conf = res.wifiConfiguration
-                            val ssid = conf?.SSID?.trim('"') ?: "WarPair"
-                            val pass = conf?.preSharedKey?.trim('"') ?: ""
+                            val (ssid, pass) = readCredentials(res)
                             result.set(
                                 Credentials(
                                     ssid = ssid,
                                     password = pass,
+                                    // Local-only hotspot gateway is commonly these ranges.
                                     suggestedHostIp = "192.168.43.1",
                                 ),
                             )
@@ -76,6 +75,26 @@ class SoftApLink(context: Context) {
         }
         error.get()?.let { error(it) }
         return result.get() ?: error("SoftAP produced no credentials")
+    }
+
+    private fun readCredentials(res: WifiManager.LocalOnlyHotspotReservation): Pair<String, String> {
+        // API 30+: WifiConfiguration is often null; use SoftApConfiguration.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val soft = res.softApConfiguration
+                val ssid = soft.ssid?.toString()?.trim('"')?.takeIf { it.isNotBlank() }
+                val pass = soft.passphrase?.takeIf { it.isNotBlank() }
+                if (ssid != null && pass != null) {
+                    return ssid to pass
+                }
+            } catch (_: Throwable) {
+            }
+        }
+        @Suppress("DEPRECATION")
+        val conf = res.wifiConfiguration
+        val ssid = conf?.SSID?.trim('"')?.takeIf { it.isNotBlank() } ?: "WarPair"
+        val pass = conf?.preSharedKey?.trim('"') ?: ""
+        return ssid to pass
     }
 
     fun stop() {
