@@ -14,13 +14,16 @@ import java.util.UUID
 /**
  * TCP + session + protocol file transfer.
  *
- * Client sends one file; host receives and invokes [onReceived] to persist it.
+ * [onProgress] is invoked from the worker thread (bytesDone, totalBytes, phase).
  */
 object LanLink {
     const val DEFAULT_PORT = 19730
     private const val CHUNK = 32 * 1024
-    /** Max payload kept in memory for the demo (64 MiB). */
     private const val MAX_BYTES = 64L * 1024 * 1024
+
+    fun interface Progress {
+        fun onProgress(bytesDone: Long, totalBytes: Long, phase: String)
+    }
 
     fun writeFrame(out: DataOutputStream, payload: ByteArray) {
         out.write(NearbyCore.frameEncode(payload))
@@ -40,8 +43,10 @@ object LanLink {
     fun hostOnce(
         deviceName: String,
         port: Int = DEFAULT_PORT,
+        onProgress: Progress? = null,
         onReceived: (fileName: String, data: ByteArray) -> String,
     ): String {
+        onProgress?.onProgress(0, 0, "listening")
         ServerSocket(port).use { server ->
             server.soTimeout = 180_000
             val socket = server.accept()
@@ -53,6 +58,7 @@ object LanLink {
                     initiator = false,
                     fileName = null,
                     fileBytes = null,
+                    onProgress = onProgress,
                     onReceived = onReceived,
                 )
             }
@@ -65,10 +71,12 @@ object LanLink {
         deviceName: String,
         fileName: String,
         fileBytes: ByteArray,
+        onProgress: Progress? = null,
     ): String {
         require(fileBytes.size.toLong() <= MAX_BYTES) {
             "File too large for demo (${fileBytes.size} > $MAX_BYTES)"
         }
+        onProgress?.onProgress(0, fileBytes.size.toLong(), "connecting")
         val socket = Socket()
         socket.soTimeout = 120_000
         socket.connect(InetSocketAddress(host, port), 20_000)
@@ -79,6 +87,7 @@ object LanLink {
                 initiator = true,
                 fileName = fileName,
                 fileBytes = fileBytes,
+                onProgress = onProgress,
                 onReceived = null,
             )
         }
@@ -90,12 +99,14 @@ object LanLink {
         initiator: Boolean,
         fileName: String?,
         fileBytes: ByteArray?,
+        onProgress: Progress?,
         onReceived: ((String, ByteArray) -> String)?,
     ): String {
         val input = DataInputStream(socket.getInputStream())
         val output = DataOutputStream(socket.getOutputStream())
 
         NearbyCore.createSession(deviceName, initiator).use { session ->
+            onProgress?.onProgress(0, 0, "handshake")
             val localHello = session.beginHandshake()
             if (initiator) {
                 writeFrame(output, localHello)
@@ -107,13 +118,14 @@ object LanLink {
 
             val pin = session.pin()
             val peer = session.peerName()
+            onProgress?.onProgress(0, 0, "established pin=$pin")
 
             if (initiator) {
                 require(fileName != null && fileBytes != null)
-                return sendFile(session, input, output, peer, pin, fileName, fileBytes)
+                return sendFile(session, input, output, peer, pin, fileName, fileBytes, onProgress)
             }
             require(onReceived != null)
-            return receiveFile(session, input, output, peer, pin, onReceived)
+            return receiveFile(session, input, output, peer, pin, onProgress, onReceived)
         }
     }
 
@@ -133,9 +145,12 @@ object LanLink {
         pin: String,
         fileName: String,
         fileBytes: ByteArray,
+        onProgress: Progress?,
     ): String {
         val sessionId = "xfer-${UUID.randomUUID().toString().take(8)}"
-        sendSealed(session, output, NearbyCore.encodeOffer(sessionId, fileName, fileBytes.size.toLong()))
+        val total = fileBytes.size.toLong()
+        onProgress?.onProgress(0, total, "offer")
+        sendSealed(session, output, NearbyCore.encodeOffer(sessionId, fileName, total))
 
         val respPlain = readSealed(session, input)
         require(NearbyCore.msgTag(respPlain) == 3) { "expected Response" }
@@ -154,10 +169,12 @@ object LanLink {
             )
             offset = end
             seq++
+            onProgress?.onProgress(offset.toLong(), total, "sending")
         }
 
         val hash = NearbyCore.hash(fileBytes)
         sendSealed(session, output, NearbyCore.encodeComplete(sessionId, hash))
+        onProgress?.onProgress(total, total, "complete")
 
         return buildString {
             appendLine("TRANSFER OK (sender)")
@@ -175,6 +192,7 @@ object LanLink {
         output: DataOutputStream,
         peer: String,
         pin: String,
+        onProgress: Progress?,
         onReceived: (String, ByteArray) -> String,
     ): String {
         val offerPlain = readSealed(session, input)
@@ -182,6 +200,7 @@ object LanLink {
         val offer = NearbyCore.parseOffer(offerPlain)
         require(offer.size <= MAX_BYTES) { "Offer too large: ${offer.size}" }
 
+        onProgress?.onProgress(0, offer.size, "accepted ${offer.fileName}")
         sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, true))
 
         val buf = ByteArrayOutputStream()
@@ -194,6 +213,7 @@ object LanLink {
                     require(buf.size().toLong() + chunk.data.size <= MAX_BYTES) { "exceeded max size" }
                     buf.write(chunk.data)
                     chunks++
+                    onProgress?.onProgress(buf.size().toLong(), offer.size, "receiving")
                 }
                 7 -> break
                 else -> error("unexpected tag ${NearbyCore.msgTag(plain)}")
@@ -203,7 +223,9 @@ object LanLink {
         val data = buf.toByteArray()
         val digest = NearbyCore.hash(data)
         val okSize = data.size.toLong() == offer.size
+        onProgress?.onProgress(data.size.toLong(), offer.size, "saving")
         val saveSummary = onReceived(offer.fileName, data)
+        onProgress?.onProgress(data.size.toLong(), offer.size, "complete")
 
         return buildString {
             appendLine("TRANSFER OK (receiver)")
