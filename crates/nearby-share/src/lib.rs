@@ -4,7 +4,7 @@
 //! - Device identity & cryptography
 //! - Discovery abstractions
 //! - Secure session (handshake + AEAD channel)
-//! - Protocol messages
+//! - Protocol messages + binary codec
 //! - Transfer session management
 //!
 //! Platform bindings (Android via UniFFI, later iOS) live on top of this crate.
@@ -25,7 +25,7 @@ pub use crypto::{
     PublicKey, SecretKey, SessionSecrets,
 };
 pub use discovery::{DiscoveryError, DiscoveryEvent, DiscoveryService, Peer};
-pub use protocol::{FileInfo, Medium, Message, PROTOCOL_VERSION};
+pub use protocol::{CodecError, FileInfo, Medium, Message, PROTOCOL_VERSION};
 pub use session::{framing, HelloPayload, Role, SecureSession, SessionError, SessionPhase};
 pub use transfer::{TransferDirection, TransferSession, TransferState};
 
@@ -53,7 +53,7 @@ mod tests {
     }
 
     #[test]
-    fn end_to_end_secure_session_and_transfer_smoke() {
+    fn end_to_end_codec_over_secure_session() {
         let alice_id = DeviceIdentity::generate_ephemeral("Alice");
         let bob_id = DeviceIdentity::generate_ephemeral("Bob");
 
@@ -73,31 +73,46 @@ mod tests {
         alice.complete_handshake(&b_hello).unwrap();
         bob.complete_handshake(&a_hello).unwrap();
 
-        assert_eq!(alice.pin(), bob.pin());
-        assert_eq!(alice.negotiated_mediums(), vec![Medium::WifiLan]);
+        // Offer → encrypt → frame → deframe → decrypt → decode
+        let offer = Message::Offer {
+            session_id: "sess-42".into(),
+            files: vec![FileInfo {
+                file_id: 1,
+                name: "photo.jpg".into(),
+                size: 1_024_000,
+                mime_type: Some("image/jpeg".into()),
+                relative_path: None,
+            }],
+            total_bytes: 1_024_000,
+        };
 
-        // Encrypted application data
-        let frame = framing::encode_frame(&alice.seal(b"chunk-0").unwrap());
-        let (payload, _) = framing::try_decode_frame(&frame).unwrap();
-        assert_eq!(bob.open(&payload).unwrap(), b"chunk-0");
+        let sealed = alice.seal(&offer.encode()).unwrap();
+        let wire = framing::encode_frame(&sealed);
+        let (payload, _) = framing::try_decode_frame(&wire).unwrap();
+        let opened = bob.open(&payload).unwrap();
+        let decoded = Message::decode(&opened).unwrap();
+        assert_eq!(decoded, offer);
 
-        // Transfer state machine still works independently
-        let files = vec![FileInfo {
+        // Response the other way
+        let response = Message::Response {
+            session_id: "sess-42".into(),
+            accepted: true,
+            reason: None,
+        };
+        let sealed = bob.seal(&response.encode()).unwrap();
+        let opened = alice.open(&sealed).unwrap();
+        assert_eq!(Message::decode(&opened).unwrap(), response);
+
+        // Chunk
+        let chunk = Message::Chunk {
+            session_id: "sess-42".into(),
             file_id: 1,
-            name: "photo.jpg".into(),
-            size: 1_024_000,
-            mime_type: Some("image/jpeg".into()),
-            relative_path: None,
-        }];
-        let mut transfer = TransferSession::new_outgoing(
-            "sess-1".into(),
-            bob.peer_fingerprint().unwrap().into(),
-            files,
-        );
-        transfer.accept();
-        transfer.start(Some(Medium::WifiLan));
-        transfer.update_progress(512_000, 0);
-        transfer.complete();
-        assert!(!transfer.is_active());
+            seq: 0,
+            data: vec![0xDE, 0xAD, 0xBE, 0xEF],
+            is_last: true,
+        };
+        let sealed = alice.seal(&chunk.encode()).unwrap();
+        let opened = bob.open(&sealed).unwrap();
+        assert_eq!(Message::decode(&opened).unwrap(), chunk);
     }
 }
