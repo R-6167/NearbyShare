@@ -23,6 +23,9 @@ rand = "0.8"
 rand_core = "0.6"
 zeroize = { version = "1", features = ["derive"] }
 
+# Errors (FFI surface)
+thiserror = "1"
+
 # UniFFI (bindings for Kotlin / Swift)
 uniffi = { version = "0.28", optional = true }
 
