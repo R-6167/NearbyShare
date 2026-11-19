@@ -46,8 +46,9 @@ object QrBootstrap {
             val v = dec(part.substringAfter('=', ""))
             map[k] = v
         }
-        val host = map["host"] ?: error("missing host")
+        val host = map["host"]?.trim()?.takeIf { it.isNotEmpty() } ?: error("missing host")
         val port = map["port"]?.toIntOrNull() ?: LanLink.DEFAULT_PORT
+        require(port in 1..65535) { "port must be between 1 and 65535" }
         return Payload(
             host = host,
             port = port,
