@@ -26,7 +26,7 @@ object WifiDirectTransferController {
         require(connection.isGroupOwner) {
             "Wi-Fi Direct group formed, but this device is not the group owner. Join from the other device."
         }
-        onStatus("Wi-Fi Direct group ready. Waiting for the other device…")
+        statusCallback("Wi-Fi Direct group ready. Waiting for the other device…")
         val link = adapter.acceptPeer()
         return LanLink.hostConnected(
             connection = link,
@@ -56,7 +56,7 @@ object WifiDirectTransferController {
         }
         val host = connection.groupOwnerHost
             ?: throw IOException("Wi-Fi Direct group owner address was not provided")
-        onStatus("Connected to Wi-Fi Direct group. Opening secure transfer…")
+        statusCallback("Connected to Wi-Fi Direct group. Opening secure transfer…")
         val link = adapter.connectToGroupOwner(host)
         return LanLink.sendConnected(
             connection = link,
@@ -70,7 +70,7 @@ object WifiDirectTransferController {
 
     private fun awaitGroup(
         adapter: WifiDirectLink,
-        onStatus: (String) -> Unit,
+        statusCallback: (String) -> Unit,
         begin: () -> Unit,
     ): WifiDirectLink.Connection {
         val latch = CountDownLatch(1)
