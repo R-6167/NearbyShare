@@ -5,15 +5,16 @@ Rust core + native platform bindings. No cloud. Ever.
 
 ## Status
 
-Early foundation (Phase 0).
+Phase 0 → early Phase 1 foundation.
 
-- Workspace and crate scaffolding
-- Core modules: `crypto`, `discovery`, `protocol`, `transfer`
-- Design document and feature roadmap
-- Placeholder cryptography (ready to swap for real X25519 + AEAD + BLAKE3)
-- UniFFI configuration prepared
+- Real cryptography: X25519, ChaCha20-Poly1305, BLAKE3, HKDF
+- Secure session handshake + AEAD channel + length framing
+- Binary protocol codec (`Message` encode/decode)
+- Transfer session state machine
+- **UniFFI surface** for Kotlin / Swift (`FfiIdentity`, `FfiSession`, …)
 
-See **[docs/DESIGN.md](docs/DESIGN.md)** for the full architecture, security model, and phased roadmap.
+See **[docs/DESIGN.md](docs/DESIGN.md)** for architecture and roadmap.  
+See **[docs/FFI.md](docs/FFI.md)** for binding generation and the exported API.
 
 ## Goals
 
@@ -27,28 +28,40 @@ See **[docs/DESIGN.md](docs/DESIGN.md)** for the full architecture, security mod
 
 ```
 NearbyShare/
-├── crates/
-│   └── nearby-share/          # Platform-agnostic Rust core
-│       ├── src/
-│       │   ├── crypto.rs      # Identity, key exchange, PIN, hashing
-│       │   ├── discovery.rs   # Peer + DiscoveryService trait
-│       │   ├── protocol.rs    # Messages + mediums
-│       │   ├── transfer.rs    # Session state machine
-│       │   └── lib.rs
-│       └── uniffi.toml
+├── crates/nearby-share/
+│   ├── src/
+│   │   ├── api.rs         # UniFFI-exported surface
+│   │   ├── crypto.rs      # X25519, AEAD, BLAKE3, PIN
+│   │   ├── discovery.rs
+│   │   ├── protocol.rs    # Messages + binary codec
+│   │   ├── session.rs     # Handshake + secure channel
+│   │   ├── transfer.rs
+│   │   └── lib.rs
+│   └── uniffi.toml
 ├── docs/
-│   └── DESIGN.md              # Architecture & roadmap
-├── Cargo.toml                 # Workspace
-└── rust-toolchain.toml        # Android targets pre-declared
+│   ├── DESIGN.md
+│   └── FFI.md
+├── Cargo.toml
+└── rust-toolchain.toml
 ```
 
-## Quick Start (developers)
+## Quick Start
 
 ```bash
 git clone https://github.com/Cryptic-Systems/NearbyShare.git
 cd NearbyShare
-cargo check
 cargo test
+cargo build -p nearby-share --release
+```
+
+Generate Kotlin bindings (see [docs/FFI.md](docs/FFI.md)):
+
+```bash
+cargo install uniffi-bindgen --version 0.28.3
+uniffi-bindgen generate \
+  --library target/release/libnearby_share.so \
+  --language kotlin \
+  --out-dir bindings/kotlin
 ```
 
 ## License
