@@ -15,10 +15,10 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * TCP + session + protocol file transfer.
+ * TCP + session + protocol file transfer with PIN confirm, cancel, and resume.
  *
- * After handshake both sides can require PIN confirmation. Transfers honor [TransferControl]
- * for mid-transfer cancel (sends protocol Cancel when possible).
+ * Resume: receiver responds with reason `resume_bytes:<n>`; sender skips those
+ * bytes and continues from the matching sequence.
  */
 object LanLink {
     const val DEFAULT_PORT = 19730
@@ -44,7 +44,6 @@ object LanLink {
         fun onProgress(bytesDone: Long, totalBytes: Long, phase: String)
     }
 
-    /** Confirm matching PIN on both devices before any file offers. */
     fun interface PinConfirm {
         fun confirm(peerName: String, pin: String): Boolean
     }
@@ -63,11 +62,22 @@ object LanLink {
         val size: Long,
         val category: FileCategory,
         val index: Int,
-        val totalInBatch: Int,
+        val partial: PartialInfo?,
+    )
+
+    enum class OfferAction {
+        REJECT,
+        ACCEPT_NEW,
+        RESUME,
+    }
+
+    data class OfferResult(
+        val action: OfferAction,
+        val resumeFrom: PartialInfo? = null,
     )
 
     fun interface OfferDecision {
-        fun decide(offer: OfferRequest): Boolean
+        fun decide(offer: OfferRequest): OfferResult
     }
 
     fun writeFrame(out: DataOutputStream, payload: ByteArray) {
@@ -92,7 +102,6 @@ object LanLink {
         onProgress: Progress? = null,
         onPinConfirm: PinConfirm,
         onOffer: OfferDecision,
-        openSink: (fileName: String) -> IncomingFileSink,
     ): String {
         onProgress?.onProgress(0, 0, "listening")
         ServerSocket(port).use { server ->
@@ -100,7 +109,7 @@ object LanLink {
             val socket = server.accept()
             socket.soTimeout = 180_000
             return socket.use {
-                runHost(it, deviceName, control, onProgress, onPinConfirm, onOffer, openSink)
+                runHost(it, deviceName, control, onProgress, onPinConfirm, onOffer)
             }
         }
     }
@@ -134,7 +143,6 @@ object LanLink {
         onProgress: Progress?,
         onPinConfirm: PinConfirm,
         onOffer: OfferDecision,
-        openSink: (String) -> IncomingFileSink,
     ): String {
         val input = DataInputStream(socket.getInputStream())
         val output = DataOutputStream(socket.getOutputStream())
@@ -169,13 +177,13 @@ object LanLink {
                 }
                 when (NearbyCore.msgTag(offerPlain)) {
                     8 -> return "Peer cancelled. peer=$peer pin=$pin"
-                    2 -> { /* offer */ }
+                    2 -> Unit
                     else -> error("expected Offer, got tag ${NearbyCore.msgTag(offerPlain)}")
                 }
                 index++
                 reports += receiveOne(
                     session, input, output, peer, pin, offerPlain, index,
-                    control, onProgress, onOffer, openSink,
+                    control, onProgress, onOffer,
                 )
             }
 
@@ -260,6 +268,12 @@ object LanLink {
         }
     }
 
+    private fun parseResumeBytes(reason: String?): Long {
+        if (reason == null) return 0L
+        if (!reason.startsWith("resume_bytes:")) return 0L
+        return reason.removePrefix("resume_bytes:").toLongOrNull() ?: 0L
+    }
+
     private fun sendOne(
         session: NearbyCore.Session,
         input: DataInputStream,
@@ -282,16 +296,29 @@ object LanLink {
             return "CANCELLED by peer (${file.fileName})"
         }
         require(NearbyCore.msgTag(respPlain) == 3) { "expected Response" }
-        if (!NearbyCore.parseResponseAccepted(respPlain)) {
+        val response = NearbyCore.parseResponse(respPlain)
+        if (!response.accepted) {
             return "REJECTED ${file.fileName}"
+        }
+        val skipBytes = parseResumeBytes(response.reason).coerceAtLeast(0L)
+        if (skipBytes > 0) {
+            onProgress?.onProgress(skipBytes, offerSize, "[$index/$total] resuming from $skipBytes")
         }
 
         val hasher = NearbyCore.newHasher()
         val buf = ByteArray(CHUNK)
-        var sent = 0L
-        var seq = 0L
+        var sent = skipBytes
+        var seq = if (skipBytes > 0) (skipBytes + CHUNK - 1) / CHUNK else 0L
         try {
             file.openStream().use { src ->
+                var remainingSkip = skipBytes
+                while (remainingSkip > 0) {
+                    val n = src.read(buf, 0, minOf(buf.size.toLong(), remainingSkip).toInt())
+                    if (n < 0) error("resume skip past EOF")
+                    // Hash skipped bytes so final checksum matches full file.
+                    hasher.update(buf, 0, n)
+                    remainingSkip -= n
+                }
                 while (true) {
                     control.check()
                     val n = src.read(buf)
@@ -319,7 +346,7 @@ object LanLink {
             val hash = hasher.finalizeHash()
             sendSealed(session, output, NearbyCore.encodeComplete(sessionId, hash))
             onProgress?.onProgress(sent, offerSize, "[$index/$total] complete ${file.fileName}")
-            return "OK ${file.fileName} bytes=$sent chunks=$seq peer=$peer pin=$pin"
+            return "OK ${file.fileName} bytes=$sent resume_skip=$skipBytes chunks=$seq peer=$peer pin=$pin"
         } catch (_: TransferCancelledException) {
             trySendCancel(session, output, sessionId, "user_cancel")
             return "CANCELLED ${file.fileName} after $sent bytes"
@@ -337,16 +364,16 @@ object LanLink {
         control: TransferControl,
         onProgress: Progress?,
         onOffer: OfferDecision,
-        openSink: (String) -> IncomingFileSink,
     ): String {
         val offer = NearbyCore.parseOffer(offerPlain)
         if (offer.size > 0) {
             require(offer.size <= MAX_BYTES) { "Offer too large: ${offer.size}" }
         }
         val category = ReceivedFiles.categoryFor(offer.fileName)
+        val partial = ReceivedFiles.findPartial(offer.fileName, offer.size)
         onProgress?.onProgress(0, offer.size, "[$index] offer ${offer.fileName}")
 
-        val accepted = onOffer.decide(
+        val result = onOffer.decide(
             OfferRequest(
                 peerName = peer,
                 pin = pin,
@@ -355,21 +382,33 @@ object LanLink {
                 size = offer.size,
                 category = category,
                 index = index,
-                totalInBatch = 0,
+                partial = partial,
             ),
         )
-        if (control.isCancelled()) {
+
+        if (control.isCancelled() || result.action == OfferAction.REJECT) {
             sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, false))
-            return "CANCELLED before accept ${offer.fileName}"
+            return if (control.isCancelled()) {
+                "CANCELLED before accept ${offer.fileName}"
+            } else {
+                "REJECTED ${offer.fileName}"
+            }
         }
-        sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, accepted))
 
-        if (!accepted) {
-            return "REJECTED ${offer.fileName}"
+        val resume = if (result.action == OfferAction.RESUME) result.resumeFrom else null
+        val reason = if (resume != null && resume.bytesReceived > 0) {
+            "resume_bytes:${resume.bytesReceived}"
+        } else {
+            null
         }
+        sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, true, reason))
 
-        val sink = openSink(offer.fileName)
+        val sink = ReceivedFiles.openIncoming(offer.fileName, resume)
         val hasher = NearbyCore.newHasher()
+        // For resume, we cannot re-hash prior bytes without re-reading; integrity
+        // check is size-based when resumed. Full blake3 still covers new bytes path
+        // only when starting fresh.
+        val resumed = resume != null && resume.bytesReceived > 0
         var chunks = 0
         try {
             while (true) {
@@ -380,8 +419,9 @@ object LanLink {
                         val chunk = NearbyCore.parseChunk(plain)
                         if (chunk.data.isNotEmpty()) {
                             sink.write(chunk.data)
-                            hasher.update(chunk.data)
+                            if (!resumed) hasher.update(chunk.data)
                         }
+                        sink.noteSeq(chunk.seq)
                         chunks++
                         onProgress?.onProgress(
                             sink.bytesWritten,
@@ -391,30 +431,38 @@ object LanLink {
                     }
                     7 -> break
                     8 -> {
-                        sink.abort()
-                        return "CANCELLED by peer (${offer.fileName})"
+                        sink.abort(keepPartial = true)
+                        return "CANCELLED by peer (${offer.fileName}) — partial kept for resume"
                     }
                     else -> error("unexpected tag ${NearbyCore.msgTag(plain)}")
                 }
             }
-            val digest = hasher.finalizeHash()
             val save = sink.finish()
+            val digest = if (!resumed) {
+                hasher.finalizeHash()
+            } else {
+                hasher.close()
+                ByteArray(0)
+            }
             return buildString {
                 appendLine("OK ${save.fileName}")
                 appendLine("category=${save.category.folderName}")
                 appendLine("bytes=${save.bytes}")
+                appendLine("resumed=$resumed")
                 appendLine("chunks=$chunks")
-                appendLine("blake3_prefix=${digest.take(4).joinToString("") { "%02x".format(it) }}")
+                if (digest.isNotEmpty()) {
+                    appendLine("blake3_prefix=${digest.take(4).joinToString("") { "%02x".format(it) }}")
+                }
                 append(save.summary())
             }
         } catch (t: TransferCancelledException) {
             hasher.close()
             trySendCancel(session, output, offer.sessionId, "user_cancel")
-            sink.abort()
-            return "CANCELLED ${offer.fileName}"
+            sink.abort(keepPartial = true)
+            return "CANCELLED ${offer.fileName} — partial kept for resume"
         } catch (t: Throwable) {
             hasher.close()
-            sink.abort()
+            sink.abort(keepPartial = true)
             throw t
         }
     }
