@@ -2,6 +2,8 @@
 
 The `nearby-share` crate exposes a stable FFI surface via [UniFFI](https://mozilla.github.io/uniffi-rs/) (proc-macro API).
 
+Android Gradle wiring lives under **`android/`** — see [android/README.md](../android/README.md).
+
 ## Feature flag
 
 | Feature | Default | Effect |
@@ -36,45 +38,44 @@ val hello = session.beginHandshake()
 // … send hello over TCP / BLE …
 session.completeHandshake(peerHelloBytes)
 
-val pin = session.pin()          // show to user if desired
+val pin = session.pin()
 val sealed = session.seal(payload)
 val plain = session.open(sealed)
 ```
 
-## Generate bindings
-
-Requires the `uniffi-bindgen` CLI matching the crate’s `uniffi` version (`0.28`).
+## One-shot Android build
 
 ```bash
-# Install once
-cargo install uniffi-bindgen --version 0.28.3
+# From repo root
+./scripts/build-android-native.sh
+# Then open android/ in Android Studio
+```
 
-# Build the cdylib
+The script runs `cargo-ndk` into `android/nearbyshare/src/main/jniLibs/` and
+`uniffi-bindgen` into the library module’s Java source tree.
+
+## Manual binding generation
+
+```bash
+cargo install uniffi-bindgen --version 0.28.3
 cargo build -p nearby-share --release
 
-# Kotlin
 uniffi-bindgen generate \
   --library target/release/libnearby_share.so \
   --language kotlin \
-  --out-dir bindings/kotlin
-
-# Swift
-uniffi-bindgen generate \
-  --library target/release/libnearby_share.dylib \
-  --language swift \
-  --out-dir bindings/swift
+  --out-dir android/nearbyshare/src/main/java
 ```
 
-On Android, point Gradle at the produced `.so` (per ABI) and the generated Kotlin sources under `com.crypticsystems.nearbyshare` (see `uniffi.toml`).
+Package name: `com.crypticsystems.nearbyshare` (see `crates/nearby-share/uniffi.toml`).
 
 ## Design notes
 
 - **Transport stays native** – Rust owns crypto + session; Android owns sockets / BLE / Wi-Fi Direct.
 - **Bytes in, bytes out** – Hello, seal/open, and frames are `ByteArray` so the app can plug any pipe.
-- **No discovery in FFI yet** – scanning/advertising is platform-specific; inject peers from Kotlin/Swift later via callbacks if needed.
+- **No discovery in FFI yet** – scanning/advertising is platform-specific.
 
 ## Next FFI increments
 
-1. Transfer offer / accept helpers (`FfiTransfer`)
+1. `FfiTransfer` helpers
 2. Callback interfaces for discovery events
-3. Gradle module + example Android app wiring
+3. Wire demo `MainActivity` to `libraryHello()` / `FfiSession` after first successful bindgen run
