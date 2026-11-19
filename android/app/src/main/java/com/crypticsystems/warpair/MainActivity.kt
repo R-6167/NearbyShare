@@ -76,9 +76,9 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         findViewById<TextView>(R.id.statusText)?.text = if (granted) {
-            "Nearby Wi‑Fi permission granted. Tap Start SoftAP again."
+            "Nearby Wi-Fi permission granted. Retry your Wi-Fi connection action."
         } else {
-            "Nearby Wi‑Fi permission is required to start a hotspot."
+            "Nearby Wi-Fi permission is required for Wi-Fi Direct and hotspot operations."
         }
     }
 
