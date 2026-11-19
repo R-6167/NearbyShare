@@ -12,14 +12,15 @@ import java.nio.ByteOrder
 import java.util.UUID
 
 /**
- * TCP + session + protocol file transfer demo.
+ * TCP + session + protocol file transfer.
  *
- * Client (initiator) sends a single in-memory file after handshake.
- * Host (responder) accepts, receives chunks, verifies BLAKE3, returns status.
+ * Client sends one file; host receives and invokes [onReceived] to persist it.
  */
 object LanLink {
     const val DEFAULT_PORT = 19730
     private const val CHUNK = 32 * 1024
+    /** Max payload kept in memory for the demo (64 MiB). */
+    private const val MAX_BYTES = 64L * 1024 * 1024
 
     fun writeFrame(out: DataOutputStream, payload: ByteArray) {
         out.write(NearbyCore.frameEncode(payload))
@@ -36,12 +37,25 @@ object LanLink {
         return payload
     }
 
-    fun hostOnce(deviceName: String, port: Int = DEFAULT_PORT): String {
+    fun hostOnce(
+        deviceName: String,
+        port: Int = DEFAULT_PORT,
+        onReceived: (fileName: String, data: ByteArray) -> String,
+    ): String {
         ServerSocket(port).use { server ->
             server.soTimeout = 180_000
             val socket = server.accept()
             socket.soTimeout = 120_000
-            return socket.use { runTransfer(it, deviceName, initiator = false, fileName = null, fileBytes = null) }
+            return socket.use {
+                runTransfer(
+                    socket = it,
+                    deviceName = deviceName,
+                    initiator = false,
+                    fileName = null,
+                    fileBytes = null,
+                    onReceived = onReceived,
+                )
+            }
         }
     }
 
@@ -52,10 +66,22 @@ object LanLink {
         fileName: String,
         fileBytes: ByteArray,
     ): String {
+        require(fileBytes.size.toLong() <= MAX_BYTES) {
+            "File too large for demo (${fileBytes.size} > $MAX_BYTES)"
+        }
         val socket = Socket()
         socket.soTimeout = 120_000
         socket.connect(InetSocketAddress(host, port), 20_000)
-        return socket.use { runTransfer(it, deviceName, initiator = true, fileName, fileBytes) }
+        return socket.use {
+            runTransfer(
+                socket = it,
+                deviceName = deviceName,
+                initiator = true,
+                fileName = fileName,
+                fileBytes = fileBytes,
+                onReceived = null,
+            )
+        }
     }
 
     private fun runTransfer(
@@ -64,6 +90,7 @@ object LanLink {
         initiator: Boolean,
         fileName: String?,
         fileBytes: ByteArray?,
+        onReceived: ((String, ByteArray) -> String)?,
     ): String {
         val input = DataInputStream(socket.getInputStream())
         val output = DataOutputStream(socket.getOutputStream())
@@ -85,7 +112,8 @@ object LanLink {
                 require(fileName != null && fileBytes != null)
                 return sendFile(session, input, output, peer, pin, fileName, fileBytes)
             }
-            return receiveFile(session, input, output, peer, pin)
+            require(onReceived != null)
+            return receiveFile(session, input, output, peer, pin, onReceived)
         }
     }
 
@@ -147,10 +175,12 @@ object LanLink {
         output: DataOutputStream,
         peer: String,
         pin: String,
+        onReceived: (String, ByteArray) -> String,
     ): String {
         val offerPlain = readSealed(session, input)
         require(NearbyCore.msgTag(offerPlain) == 2) { "expected Offer" }
         val offer = NearbyCore.parseOffer(offerPlain)
+        require(offer.size <= MAX_BYTES) { "Offer too large: ${offer.size}" }
 
         sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, true))
 
@@ -161,11 +191,9 @@ object LanLink {
             when (NearbyCore.msgTag(plain)) {
                 5 -> {
                     val chunk = NearbyCore.parseChunk(plain)
+                    require(buf.size().toLong() + chunk.data.size <= MAX_BYTES) { "exceeded max size" }
                     buf.write(chunk.data)
                     chunks++
-                    if (chunk.isLast) {
-                        // still expect Complete
-                    }
                 }
                 7 -> break
                 else -> error("unexpected tag ${NearbyCore.msgTag(plain)}")
@@ -175,6 +203,7 @@ object LanLink {
         val data = buf.toByteArray()
         val digest = NearbyCore.hash(data)
         val okSize = data.size.toLong() == offer.size
+        val saveSummary = onReceived(offer.fileName, data)
 
         return buildString {
             appendLine("TRANSFER OK (receiver)")
@@ -185,9 +214,7 @@ object LanLink {
             appendLine("size_match=$okSize")
             appendLine("chunks=$chunks")
             appendLine("blake3_prefix=${digest.take(4).joinToString("") { "%02x".format(it) }}")
-            if (data.size <= 512) {
-                appendLine("preview=${data.toString(Charsets.UTF_8)}")
-            }
+            append(saveSummary)
         }
     }
 }
