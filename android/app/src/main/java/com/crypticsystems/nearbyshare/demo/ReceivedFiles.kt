@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.OpenableColumns
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
@@ -40,25 +41,17 @@ data class SaveResult(
     }
 }
 
-/**
- * User-visible library on shared storage (not private app sandbox,
- * not system Movies/Music/Download trees):
- *
- * ```
- * /storage/emulated/0/NearbyShare/
- *   Music/
- *   Videos/
- *   Images/
- *   Documents/
- *   Archives/
- *   Other/
- * ```
- *
- * Requires storage / all-files access on modern Android so the top-level
- * folder can be created and browsed in Files / USB.
- */
+data class PartialInfo(
+    val fileName: String,
+    val expectedSize: Long,
+    val bytesReceived: Long,
+    val nextSeq: Long,
+    val partialFile: File,
+)
+
 object ReceivedFiles {
     const val ROOT_NAME = "NearbyShare"
+    private const val PARTIAL_SUFFIX = ".ns-partial"
 
     fun rootDir(): File {
         val root = File(Environment.getExternalStorageDirectory(), ROOT_NAME)
@@ -114,7 +107,32 @@ object ReceivedFiles {
             ?: error("Cannot open selected file")
     }
 
-    fun openIncoming(fileName: String): IncomingFileSink {
+    fun findPartial(fileName: String, expectedSize: Long): PartialInfo? {
+        val safe = sanitizeFileName(fileName)
+        val category = categoryFor(safe)
+        val dir = categoryDir(category)
+        val partial = File(dir, "$safe$PARTIAL_SUFFIX")
+        if (!partial.isFile || partial.length() <= 0L) return null
+        if (expectedSize > 0 && partial.length() >= expectedSize) return null
+        val meta = File(dir, "$safe$PARTIAL_SUFFIX.meta")
+        var nextSeq = 0L
+        if (meta.isFile) {
+            meta.readLines().forEach { line ->
+                if (line.startsWith("nextSeq=")) {
+                    nextSeq = line.removePrefix("nextSeq=").toLongOrNull() ?: 0L
+                }
+            }
+        }
+        return PartialInfo(
+            fileName = safe,
+            expectedSize = expectedSize,
+            bytesReceived = partial.length(),
+            nextSeq = nextSeq,
+            partialFile = partial,
+        )
+    }
+
+    fun openIncoming(fileName: String, resume: PartialInfo? = null): IncomingFileSink {
         ensureLibrary()
         val safe = sanitizeFileName(fileName)
         val category = categoryFor(safe)
@@ -122,9 +140,34 @@ object ReceivedFiles {
         if (!dir.isDirectory) {
             error("Cannot write to ${dir.absolutePath}. Check storage permission.")
         }
-        val file = uniqueFile(dir, safe)
-        val out = FileOutputStream(file)
-        return IncomingFileSink(file, category, safe, out)
+
+        return if (resume != null && resume.partialFile.isFile) {
+            val out = FileOutputStream(resume.partialFile, /* append */ true)
+            IncomingFileSink(
+                file = resume.partialFile,
+                category = category,
+                fileName = safe,
+                out = out,
+                bytesWritten = resume.bytesReceived,
+                nextSeq = resume.nextSeq,
+                isPartial = true,
+            )
+        } else {
+            // Fresh transfer uses the real name; partials live as name.ns-partial until complete.
+            val partial = File(dir, "$safe$PARTIAL_SUFFIX")
+            if (partial.exists()) partial.delete()
+            File(dir, "$safe$PARTIAL_SUFFIX.meta").delete()
+            val out = FileOutputStream(partial)
+            IncomingFileSink(
+                file = partial,
+                category = category,
+                fileName = safe,
+                out = out,
+                bytesWritten = 0,
+                nextSeq = 0,
+                isPartial = true,
+            )
+        }
     }
 
     fun hasWritableLibrary(): Boolean {
@@ -166,21 +209,7 @@ object ReceivedFiles {
         return -1L
     }
 
-    private fun uniqueFile(dir: File, name: String): File {
-        val base = File(dir, name)
-        if (!base.exists()) return base
-        val dot = name.lastIndexOf('.')
-        val stem = if (dot > 0) name.substring(0, dot) else name
-        val ext = if (dot > 0) name.substring(dot) else ""
-        var i = 1
-        while (true) {
-            val candidate = File(dir, "$stem-$i$ext")
-            if (!candidate.exists()) return candidate
-            i++
-        }
-    }
-
-    private fun sanitizeFileName(name: String): String {
+    fun sanitizeFileName(name: String): String {
         val cleaned = name.replace(Regex("[\\/:*?\"<>|]"), "_").trim()
         return cleaned.ifBlank { "received.bin" }
     }
@@ -191,8 +220,13 @@ class IncomingFileSink(
     val category: FileCategory,
     val fileName: String,
     private val out: OutputStream,
+    bytesWritten: Long = 0,
+    nextSeq: Long = 0,
+    private val isPartial: Boolean = false,
 ) {
-    var bytesWritten: Long = 0
+    var bytesWritten: Long = bytesWritten
+        private set
+    var nextSeq: Long = nextSeq
         private set
 
     fun write(chunk: ByteArray) {
@@ -200,22 +234,73 @@ class IncomingFileSink(
         bytesWritten += chunk.size
     }
 
+    fun noteSeq(seq: Long) {
+        nextSeq = seq + 1
+    }
+
     fun finish(): SaveResult {
         out.flush()
         out.close()
+        val finalFile = if (isPartial) {
+            val target = File(file.parentFile, fileName)
+            val dest = if (target.exists()) uniqueSibling(target) else target
+            if (!file.renameTo(dest)) {
+                FileInputStream(file).use { input ->
+                    FileOutputStream(dest).use { output -> input.copyTo(output) }
+                }
+                file.delete()
+            }
+            File(file.parentFile, "${file.name}.meta").delete()
+            dest
+        } else {
+            file
+        }
         return SaveResult(
-            appPath = file.absolutePath,
+            appPath = finalFile.absolutePath,
             category = category,
-            fileName = fileName,
+            fileName = finalFile.name,
             bytes = bytesWritten,
         )
     }
 
-    fun abort() {
+    /** Keep partial on disk for resume; write nextSeq metadata. */
+    fun parkForResume() {
+        try {
+            out.flush()
+            out.close()
+        } catch (_: Exception) {
+        }
+        try {
+            val meta = File(file.parentFile, "${file.name}.meta")
+            meta.writeText("nextSeq=$nextSeq\nbytes=$bytesWritten\n")
+        } catch (_: Exception) {
+        }
+    }
+
+    fun abort(keepPartial: Boolean = true) {
         try {
             out.close()
         } catch (_: Exception) {
         }
-        file.delete()
+        if (keepPartial && bytesWritten > 0) {
+            parkForResume()
+        } else {
+            file.delete()
+            File(file.parentFile, "${file.name}.meta").delete()
+        }
+    }
+
+    private fun uniqueSibling(base: File): File {
+        val name = base.name
+        val dir = base.parentFile
+        val dot = name.lastIndexOf('.')
+        val stem = if (dot > 0) name.substring(0, dot) else name
+        val ext = if (dot > 0) name.substring(dot) else ""
+        var i = 1
+        while (true) {
+            val candidate = File(dir, "$stem-$i$ext")
+            if (!candidate.exists()) return candidate
+            i++
+        }
     }
 }
