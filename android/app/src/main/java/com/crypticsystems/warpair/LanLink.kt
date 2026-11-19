@@ -5,10 +5,12 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.EOFException
 import java.io.InputStream
+import java.net.ConnectException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
@@ -70,11 +72,17 @@ object LanLink {
 
     fun hostOnce(
         deviceName: String, port: Int = DEFAULT_PORT, control: TransferControl = TransferControl(),
-        onProgress: Progress? = null, onPinConfirm: PinConfirm, onOffer: OfferDecision,
+        onProgress: Progress? = null, onListening: ((Int) -> Unit)? = null,
+        onPinConfirm: PinConfirm, onOffer: OfferDecision,
     ): String {
-        onProgress?.onProgress(0, 0, "listening")
-        ServerSocket(port).use { server ->
+        onProgress?.onProgress(0, 0, "binding listener")
+        ServerSocket().apply {
+            reuseAddress = true
+            bind(InetSocketAddress(port))
+        }.use { server ->
             server.soTimeout = 180_000
+            onListening?.invoke(server.localPort)
+            onProgress?.onProgress(0, 0, "listening on ${server.localPort} — waiting for peer")
             val socket = server.accept(); socket.soTimeout = 180_000
             return socket.use { runHost(it, deviceName, control, onProgress, onPinConfirm, onOffer) }
         }
@@ -85,9 +93,19 @@ object LanLink {
         control: TransferControl = TransferControl(), onProgress: Progress? = null, onPinConfirm: PinConfirm,
     ): String {
         require(files.isNotEmpty())
+        require(host.isNotBlank()) { "peer address is empty" }
+        require(port in 1..65535) { "peer port must be between 1 and 65535" }
         Socket().use { socket ->
             socket.soTimeout = 180_000
-            socket.connect(InetSocketAddress(host, port), 20_000)
+            socket.tcpNoDelay = true
+            socket.keepAlive = true
+            try {
+                socket.connect(InetSocketAddress(host, port), 12_000)
+            } catch (e: ConnectException) {
+                throw IOException("Cannot reach $host:$port. Check that the other phone is hosting and both phones are on the same Wi‑Fi or SoftAP.", e)
+            } catch (e: SocketTimeoutException) {
+                throw IOException("Connection to $host:$port timed out. Check the IP, port, Wi‑Fi network and hotspot client isolation.", e)
+            }
             return runClient(socket, deviceName, files, control, onProgress, onPinConfirm)
         }
     }
@@ -96,6 +114,8 @@ object LanLink {
         socket: Socket, deviceName: String, control: TransferControl, onProgress: Progress?,
         onPinConfirm: PinConfirm, onOffer: OfferDecision,
     ): String {
+        socket.tcpNoDelay = true
+        socket.keepAlive = true
         val input = DataInputStream(socket.getInputStream())
         val output = DataOutputStream(socket.getOutputStream())
         NearbyCore.createSession(deviceName, false).use { session ->
