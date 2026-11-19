@@ -1,14 +1,5 @@
 //! NearbyShare – Offline peer-to-peer nearby file sharing core.
 //!
-//! This crate contains the platform-agnostic logic:
-//! - Device identity & cryptography
-//! - Discovery abstractions
-//! - Secure session (handshake + AEAD channel)
-//! - Protocol messages + binary codec
-//! - Transfer session management
-//! - UniFFI surface for Android / iOS (`api` module, `ffi` feature)
-//! - Stable C ABI smoke + session + message exports for JNA
-//!
 //! See `docs/DESIGN.md` in the repository root for the full architecture and roadmap.
 
 #![warn(missing_docs)]
@@ -17,6 +8,7 @@
 uniffi::setup_scaffolding!();
 
 pub mod c_api;
+pub mod c_hash;
 pub mod c_msg;
 pub mod crypto;
 pub mod discovery;
