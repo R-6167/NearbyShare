@@ -9,7 +9,7 @@ class TransferIntegrityValidatorTest {
     fun acceptsOrderedTransferWithMatchingCompletion() {
         val validator = TransferIntegrityValidator("sid-1", expectedSize = 5)
         validator.acceptChunk("sid-1", 1, 0, 5, isLast = true)
-        validator.verifyComplete("sid-1", 1, byteArrayOf(1, 2), byteArrayOf(1, 2))
+        validator.verifyComplete("sid-1", 1, ByteArray(32) { 1 }, ByteArray(32) { 1 })
         assertEquals(5L, validator.bytesReceived)
     }
 
@@ -33,7 +33,7 @@ class TransferIntegrityValidatorTest {
     fun rejectsCompletionBeforeFinalChunk() {
         val validator = TransferIntegrityValidator("sid-1", expectedSize = 1)
         assertThrows(IllegalStateException::class.java) {
-            validator.verifyComplete("sid-1", 1, byteArrayOf(9), byteArrayOf(9))
+            validator.verifyComplete("sid-1", 1, ByteArray(32) { 9 }, ByteArray(32) { 9 })
         }
     }
 
@@ -48,7 +48,7 @@ class TransferIntegrityValidatorTest {
         val hashValidator = TransferIntegrityValidator("sid-1", expectedSize = 1)
         hashValidator.acceptChunk("sid-1", 1, 0, 1, isLast = true)
         assertThrows(IllegalStateException::class.java) {
-            hashValidator.verifyComplete("sid-1", 1, byteArrayOf(1), byteArrayOf(2))
+            hashValidator.verifyComplete("sid-1", 1, ByteArray(32) { 1 }, ByteArray(32) { 2 })
         }
     }
 
@@ -61,7 +61,7 @@ class TransferIntegrityValidatorTest {
             initialSequence = 1,
         )
         validator.acceptChunk("sid-1", 1, 1, 3, isLast = true)
-        validator.verifyComplete("sid-1", 1, byteArrayOf(7), byteArrayOf(7))
+        validator.verifyComplete("sid-1", 1, ByteArray(32) { 7 }, ByteArray(32) { 7 })
         assertEquals(64 * 1024L + 3, validator.bytesReceived)
     }
 }
