@@ -3,6 +3,8 @@ package com.crypticsystems.warpair
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.os.Build
+import java.net.Inet4Address
+import java.net.NetworkInterface
 import android.os.Handler
 import android.os.Looper
 import java.util.concurrent.CountDownLatch
@@ -42,14 +44,20 @@ class SoftApLink(context: Context) {
                         override fun onStarted(res: WifiManager.LocalOnlyHotspotReservation) {
                             reservation = res
                             val (ssid, pass) = readCredentials(res)
-                            result.set(
-                                Credentials(
-                                    ssid = ssid,
-                                    password = pass,
-                                    // Local-only hotspot gateway is commonly these ranges.
-                                    suggestedHostIp = "192.168.43.1",
-                                ),
-                            )
+                            val hostIp = detectSoftApHostIp()
+                            if (hostIp == null) {
+                                error.set("Hotspot started, but Android did not expose its local gateway address. Stop the hotspot and try shared-Wi‑Fi discovery, or enter the hotspot host IP manually.")
+                                try { res.close() } catch (_: Throwable) {}
+                                reservation = null
+                            } else {
+                                result.set(
+                                    Credentials(
+                                        ssid = ssid,
+                                        password = pass,
+                                        suggestedHostIp = hostIp,
+                                    ),
+                                )
+                            }
                             latch.countDown()
                         }
 
@@ -75,6 +83,30 @@ class SoftApLink(context: Context) {
         }
         error.get()?.let { error(it) }
         return result.get() ?: error("SoftAP produced no credentials")
+    }
+
+    /** Resolve the actual IPv4 address assigned to the hotspot interface; never guess a gateway. */
+    private fun detectSoftApHostIp(): String? {
+        return try {
+            val interfaces = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
+                .filter { it.isUp && !it.isLoopback }
+            val preferred = interfaces.filter { ni ->
+                val name = ni.name.lowercase()
+                name.contains("ap") || name.contains("softap") ||
+                    name.contains("wlan1") || name.contains("swlan")
+            }
+            val candidates = (preferred + interfaces.filterNot { it in preferred }).flatMap { ni ->
+                ni.inetAddresses.toList().filterIsInstance<Inet4Address>()
+                    .filter { !it.isLoopbackAddress && it.isSiteLocalAddress }
+                    .map { ni.name to it.hostAddress }
+            }
+            candidates.firstOrNull { (name, _) ->
+                val n = name.lowercase()
+                n.contains("ap") || n.contains("softap") || n.contains("wlan1") || n.contains("swlan")
+            }?.second ?: candidates.singleOrNull()?.second
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     private fun readCredentials(res: WifiManager.LocalOnlyHotspotReservation): Pair<String, String> {
