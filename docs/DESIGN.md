@@ -38,7 +38,7 @@ A transport reconnect creates a fresh authenticated channel and PIN handshake. I
 
 - Shared Wi-Fi / SoftAP use the existing TCP transport.
 - Wi-Fi Direct group negotiation and TCP socket adapter are implemented in `WifiDirectLink`; the group owner accepts a TCP peer and the group client connects to the owner. The caller runs the same authenticated `LanLink` protocol over the returned `TransferConnection`.
-- Bluetooth is a fallback / small-file option, not assumed to be available or faster.
+- Bluetooth Classic RFCOMM uses a secure, paired-device socket adapter; it is a fallback / small-file option, not assumed to be available or faster.
 - The policy layer orders only platform-confirmed available transports. An adapter must still establish a real connection before it is considered usable.
 - If a route fails, the coordinator advances to the next available route while retaining the same selected files and transfer checkpoint.
 - Never delete a partial file just because a socket or radio link failed.
@@ -47,5 +47,5 @@ A transport reconnect creates a fresh authenticated channel and PIN handshake. I
 
 - Implemented: crypto, session, codec, Android LAN TCP, SoftAP + QR bootstrap, mDNS discovery, chunk integrity, partial-file resume.
 - Added in Phase 3 foundation: transport ordering policy and deterministic failover sequence with unit tests.
-- Not yet implemented: native Wi-Fi Direct adapter, Bluetooth adapter, live adapter health checks, automatic end-to-end failover across radios.
-- Implemented in this phase: native Wi-Fi Direct discovery, peer listing, group create/connect/remove, connection-info reporting and group-owner TCP socket setup. UI orchestration, transfer-session coordination, Bluetooth transport and device-level interruption/resume tests remain next.
+- Implemented: native Wi-Fi Direct adapter and secure Bluetooth Classic RFCOMM socket adapter for already-paired devices. Bluetooth discovery/pairing UI, live adapter health checks and automatic end-to-end failover across radios remain pending.
+- Implemented in this phase: native Wi-Fi Direct discovery, peer listing, group create/connect/remove, connection-info reporting and group-owner TCP socket setup; Wi-Fi Direct UI and LanLink orchestration; Bluetooth Classic secure RFCOMM host/connect adapter for bonded peers. Bluetooth UI integration, automatic cross-transport recovery and device-level interruption/resume tests remain next.
