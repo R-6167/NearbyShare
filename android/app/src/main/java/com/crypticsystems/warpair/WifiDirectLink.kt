@@ -237,8 +237,6 @@ class WifiDirectLink(context: Context) : AutoCloseable {
         }
     }
 
-    private fun requestConnectionQuietly() = requestConnection()
-
     private fun actionListener(success: String, failure: (String) -> String) =
         object : WifiP2pManager.ActionListener {
             override fun onSuccess() { listener?.onStatus(success) }
@@ -261,8 +259,8 @@ class WifiDirectLink(context: Context) : AutoCloseable {
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        stopPeerDiscovery()
-        removeGroup()
+        try { manager.stopPeerDiscovery(channel, null) } catch (_: Throwable) {}
+        try { manager.removeGroup(channel, null) } catch (_: Throwable) {}
         if (registered) {
             try { appContext.unregisterReceiver(receiver) } catch (_: Throwable) {}
             registered = false
