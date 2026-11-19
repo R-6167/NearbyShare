@@ -53,6 +53,23 @@ class TransferIntegrityValidatorTest {
     }
 
     @Test
+    fun rejectsChunkAfterFinalMarker() {
+        val validator = TransferIntegrityValidator("sid-1", expectedSize = 2)
+        validator.acceptChunk("sid-1", 1, 0, 1, isLast = true)
+        assertThrows(IllegalStateException::class.java) {
+            validator.acceptChunk("sid-1", 1, 1, 1, isLast = true)
+        }
+    }
+
+    @Test
+    fun rejectsChunkLargerThanProtocolLimit() {
+        val validator = TransferIntegrityValidator("sid-1", expectedSize = 64 * 1024L + 1)
+        assertThrows(IllegalStateException::class.java) {
+            validator.acceptChunk("sid-1", 1, 0, 64 * 1024 + 1, isLast = false)
+        }
+    }
+
+    @Test
     fun resumesFromVerifiedChunkBoundary() {
         val validator = TransferIntegrityValidator(
             sessionId = "sid-1",
