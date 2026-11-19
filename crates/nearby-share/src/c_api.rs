@@ -11,10 +11,10 @@ use crate::crypto::DeviceIdentity;
 use crate::protocol::Medium;
 use crate::session::{Role, SecureSession};
 
-/// Copy `text` into `buf` (UTF-8). Returns bytes written, or `-1` on error.
+/// Copy `text` into `buf` (UTF-8).
 ///
-//! If `buf` is null or too small, returns the required size as a negative
-/// sentinel only when null; if too small returns -2.
+/// Returns bytes written. If `buf` is null, returns the required length.
+/// If the buffer is too small, returns `-2`.
 fn write_out(buf: *mut u8, len: usize, text: &str) -> i32 {
     let bytes = text.as_bytes();
     if buf.is_null() {
@@ -110,7 +110,7 @@ fn run_smoke() -> Result<String, String> {
     String::from_utf8(out).map_err(|e| e.to_string())
 }
 
-/// Optional helper: copy up to `len` bytes from a C string-ish test (unused).
+/// Touch a buffer so linkers keep the symbol table honest in tests.
 #[no_mangle]
 pub extern "C" fn nearby_c_buffer_len_check(buf: *const u8, len: usize) -> i32 {
     if buf.is_null() {
