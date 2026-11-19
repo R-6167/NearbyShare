@@ -25,32 +25,39 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : AppCompatActivity() {
-    private var picked: PickedFile? = null
+    private var pickedFiles: List<PickedFile> = emptyList()
     private lateinit var nsd: NsdNearby
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    private val openDocument = registerForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri: Uri? ->
-        if (uri == null) return@registerForActivityResult
-        try {
-            contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION,
-            )
-        } catch (_: SecurityException) {
+    private val openDocuments = registerForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris: List<Uri> ->
+        if (uris.isEmpty()) return@registerForActivityResult
+        val loaded = mutableListOf<PickedFile>()
+        for (uri in uris) {
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            } catch (_: SecurityException) {
+            }
+            try {
+                loaded += ReceivedFiles.readPickedMeta(this, uri)
+            } catch (t: Throwable) {
+                findViewById<TextView>(R.id.pickedFileText).text =
+                    "Failed to read a file: ${t.message}"
+                return@registerForActivityResult
+            }
         }
-        try {
-            picked = ReceivedFiles.readPickedMeta(this, uri)
-            val sizeLabel = if (picked!!.size >= 0) "${picked!!.size} bytes" else "size unknown"
-            val cat = ReceivedFiles.categoryFor(picked!!.displayName).folderName
-            findViewById<TextView>(R.id.pickedFileText).text =
-                "Selected: ${picked!!.displayName} ($sizeLabel) → NearbyShare/$cat"
-        } catch (t: Throwable) {
-            picked = null
-            findViewById<TextView>(R.id.pickedFileText).text =
-                "Failed to read file: ${t.message}"
+        pickedFiles = loaded
+        val summary = loaded.joinToString("\n") { p ->
+            val sizeLabel = if (p.size >= 0) formatSize(p.size) else "?"
+            val cat = ReceivedFiles.categoryFor(p.displayName).folderName
+            "• ${p.displayName} ($sizeLabel) → $cat"
         }
+        findViewById<TextView>(R.id.pickedFileText).text =
+            "${loaded.size} file(s) selected:\n$summary"
     }
 
     private val requestLegacyStorage = registerForActivityResult(
@@ -104,7 +111,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         pickFileButton.setOnClickListener {
-            openDocument.launch(arrayOf("*/*"))
+            openDocuments.launch(arrayOf("*/*"))
         }
 
         discoverButton.setOnClickListener {
@@ -151,47 +158,46 @@ class MainActivity : AppCompatActivity() {
                 status.text = "Enter host IP or tap Discover peers."
                 return@setOnClickListener
             }
-            val localPicked = picked
             val peerPort = nsd.currentPeers().firstOrNull { it.host == host }?.port
                 ?: LanLink.DEFAULT_PORT
 
-            runBg(listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton), status) {
-                if (localPicked != null) {
-                    ReceivedFiles.openPickedStream(this@MainActivity, localPicked.uri).use { stream ->
-                        LanLink.connectOnce(
-                            host = host,
-                            port = peerPort,
-                            deviceName = name,
-                            fileName = localPicked.displayName,
-                            fileSize = localPicked.size,
-                            inputStream = stream,
-                            onProgress = progressTo(status),
-                        )
-                    }
-                } else {
-                    val text = payloadInput.text?.toString() ?: ""
-                    val bytes = text.toByteArray(Charsets.UTF_8)
-                    ByteArrayInputStream(bytes).use { stream ->
-                        LanLink.connectOnce(
-                            host = host,
-                            port = peerPort,
-                            deviceName = name,
-                            fileName = "note.txt",
-                            fileSize = bytes.size.toLong(),
-                            inputStream = stream,
-                            onProgress = progressTo(status),
-                        )
-                    }
+            val files: List<LanLink.OutgoingFile> = if (pickedFiles.isNotEmpty()) {
+                pickedFiles.map { p ->
+                    LanLink.OutgoingFile(
+                        fileName = p.displayName,
+                        size = p.size,
+                        openStream = { ReceivedFiles.openPickedStream(this@MainActivity, p.uri) },
+                    )
                 }
+            } else {
+                val text = payloadInput.text?.toString() ?: ""
+                val bytes = text.toByteArray(Charsets.UTF_8)
+                listOf(
+                    LanLink.OutgoingFile(
+                        fileName = "note.txt",
+                        size = bytes.size.toLong(),
+                        openStream = { ByteArrayInputStream(bytes) },
+                    ),
+                )
+            }
+
+            runBg(listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton), status) {
+                LanLink.connectOnce(
+                    host = host,
+                    port = peerPort,
+                    deviceName = name,
+                    files = files,
+                    onProgress = progressTo(status),
+                )
             }
         }
     }
 
-    /** Blocks worker thread until user accepts or rejects (or timeout). */
     private fun askAcceptOffer(offer: LanLink.OfferRequest): Boolean {
         val latch = CountDownLatch(1)
         val accepted = AtomicBoolean(false)
         val sizeLabel = if (offer.size > 0) formatSize(offer.size) else "unknown size"
+        val indexLabel = if (offer.index > 0) " (#${offer.index})" else ""
 
         mainHandler.post {
             if (isFinishing) {
@@ -199,7 +205,7 @@ class MainActivity : AppCompatActivity() {
                 return@post
             }
             AlertDialog.Builder(this)
-                .setTitle("Incoming file")
+                .setTitle("Incoming file$indexLabel")
                 .setMessage(
                     "From: ${offer.peerName}\n" +
                         "PIN: ${offer.pin}\n\n" +
@@ -220,7 +226,6 @@ class MainActivity : AppCompatActivity() {
                 .show()
         }
 
-        // Give the user up to 2 minutes to decide.
         val ok = latch.await(120, TimeUnit.SECONDS)
         return ok && accepted.get()
     }
