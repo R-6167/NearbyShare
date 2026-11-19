@@ -2,6 +2,8 @@ package com.crypticsystems.nearbyshare.demo
 
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -12,6 +14,8 @@ import java.net.NetworkInterface
 
 class MainActivity : AppCompatActivity() {
     private var picked: PickedFile? = null
+    private lateinit var nsd: NsdNearby
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val openDocument = registerForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -23,7 +27,6 @@ class MainActivity : AppCompatActivity() {
                 android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
             )
         } catch (_: SecurityException) {
-            // Not all providers support persistable grants; read still works for this session.
         }
         try {
             picked = ReceivedFiles.readPicked(this, uri)
@@ -40,24 +43,49 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        nsd = NsdNearby(this)
+        nsd.onStatus = { msg ->
+            // Soft status line without wiping transfer results mid-flight unless idle.
+        }
+        nsd.onPeersChanged = { peers ->
+            val peersText = findViewById<TextView>(R.id.peersText)
+            val hostInput = findViewById<EditText>(R.id.hostInput)
+            if (peers.isEmpty()) {
+                peersText.text = "Peers: (none yet)"
+            } else {
+                peersText.text = peers.joinToString("\n") { p ->
+                    "${p.deviceName}  ${p.host}:${p.port}"
+                }
+                if (hostInput.text.isNullOrBlank()) {
+                    hostInput.setText(peers.first().host)
+                }
+            }
+        }
+
         val status = findViewById<TextView>(R.id.statusText)
         val smokeButton = findViewById<Button>(R.id.smokeButton)
         val hostButton = findViewById<Button>(R.id.hostButton)
         val joinButton = findViewById<Button>(R.id.joinButton)
         val pickFileButton = findViewById<Button>(R.id.pickFileButton)
+        val discoverButton = findViewById<Button>(R.id.discoverButton)
         val nameInput = findViewById<EditText>(R.id.nameInput)
         val hostInput = findViewById<EditText>(R.id.hostInput)
         val payloadInput = findViewById<EditText>(R.id.payloadInput)
 
         status.text =
-            "IPs:\n${localIpv4List()}\n\nHost receives & saves files. Join sends a picked file (or text)."
+            "IPs:\n${localIpv4List()}\n\nHost advertises mDNS. Discover fills peer IP. Pick a file, then Join."
 
         pickFileButton.setOnClickListener {
             openDocument.launch(arrayOf("*/*"))
         }
 
+        discoverButton.setOnClickListener {
+            nsd.startDiscovery()
+            status.text = "Discovering peers on LAN…"
+        }
+
         smokeButton.setOnClickListener {
-            runBg(listOf(smokeButton, hostButton, joinButton), status) {
+            runBg(listOf(smokeButton, hostButton, joinButton, discoverButton), status) {
                 val report = NearbyCore.smokeTest()
                 if (report.startsWith("OK")) "Smoke passed\n\n$report" else "Smoke failed\n\n$report"
             }
@@ -65,9 +93,17 @@ class MainActivity : AppCompatActivity() {
 
         hostButton.setOnClickListener {
             val name = nameInput.text?.toString()?.ifBlank { "Host" } ?: "Host"
-            runBg(listOf(smokeButton, hostButton, joinButton), status) {
-                LanLink.hostOnce(name) { fileName, data ->
-                    ReceivedFiles.saveReceived(this@MainActivity, fileName, data).summary()
+            nsd.advertise(name, LanLink.DEFAULT_PORT)
+            runBg(listOf(smokeButton, hostButton, joinButton, discoverButton), status) {
+                try {
+                    LanLink.hostOnce(
+                        deviceName = name,
+                        onProgress = progressTo(status),
+                    ) { fileName, data ->
+                        ReceivedFiles.saveReceived(this@MainActivity, fileName, data).summary()
+                    }
+                } finally {
+                    mainHandler.post { nsd.stopAdvertising() }
                 }
             }
         }
@@ -76,7 +112,7 @@ class MainActivity : AppCompatActivity() {
             val name = nameInput.text?.toString()?.ifBlank { "Client" } ?: "Client"
             val host = hostInput.text?.toString()?.trim().orEmpty()
             if (host.isEmpty()) {
-                status.text = "Enter host IP."
+                status.text = "Enter host IP or tap Discover peers."
                 return@setOnClickListener
             }
             val localPicked = picked
@@ -89,9 +125,35 @@ class MainActivity : AppCompatActivity() {
                 fileName = "note.txt"
                 bytes = (payloadInput.text?.toString() ?: "").toByteArray(Charsets.UTF_8)
             }
-            runBg(listOf(smokeButton, hostButton, joinButton), status) {
-                LanLink.connectOnce(host, LanLink.DEFAULT_PORT, name, fileName, bytes)
+            val peerPort = nsd.currentPeers().firstOrNull { it.host == host }?.port
+                ?: LanLink.DEFAULT_PORT
+            runBg(listOf(smokeButton, hostButton, joinButton, discoverButton), status) {
+                LanLink.connectOnce(
+                    host = host,
+                    port = peerPort,
+                    deviceName = name,
+                    fileName = fileName,
+                    fileBytes = bytes,
+                    onProgress = progressTo(status),
+                )
             }
+        }
+    }
+
+    override fun onDestroy() {
+        nsd.shutdown()
+        super.onDestroy()
+    }
+
+    private fun progressTo(status: TextView): LanLink.Progress {
+        return LanLink.Progress { done, total, phase ->
+            val line = if (total > 0) {
+                val pct = (done * 100 / total).toInt().coerceIn(0, 100)
+                "$phase  $done/$total ($pct%)"
+            } else {
+                phase
+            }
+            mainHandler.post { status.text = line }
         }
     }
 
