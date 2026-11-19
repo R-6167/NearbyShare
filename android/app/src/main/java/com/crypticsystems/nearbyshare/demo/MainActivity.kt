@@ -4,15 +4,12 @@ import android.os.Bundle
 import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import com.crypticsystems.nearbyshare.NativeLoad
+import com.crypticsystems.nearbyshare.NearbyCore
 
 /**
- * Minimal demo host.
+ * Demo host: runs the native crypto/session smoke test on device.
  *
- * After running `scripts/build-android-native.sh`, UniFFI generates
- * `libraryHello()`, `FfiIdentity`, `FfiSession`, etc. under
- * `com.crypticsystems.nearbyshare`. Until then this activity only verifies
- * that `libnearby_share.so` can be loaded.
+ * Uses the stable C ABI via [NearbyCore] (no UniFFI generate required).
  */
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -22,23 +19,33 @@ class MainActivity : AppCompatActivity() {
         val status = findViewById<TextView>(R.id.statusText)
         val button = findViewById<Button>(R.id.smokeButton)
 
+        status.text = "Tap the button to run the native core smoke test."
+
         button.setOnClickListener {
-            status.text = runSmoke()
+            status.text = "Running…"
+            button.isEnabled = false
+            Thread {
+                val result = runSmoke()
+                runOnUiThread {
+                    status.text = result
+                    button.isEnabled = true
+                }
+            }.start()
         }
     }
 
     private fun runSmoke(): String {
         return try {
-            NativeLoad.ensure()
-            // Prefer UniFFI helpers when bindings have been generated:
-            //   val hello = libraryHello()
-            //   val id = FfiIdentity.generate("Android")
-            //   "ok: $hello / ${id.fingerprint()}"
-            "Native library loaded (libnearby_share).\n" +
-                "Generate UniFFI Kotlin bindings to call libraryHello() / FfiSession."
+            val report = NearbyCore.smokeTest()
+            if (report.startsWith("OK")) {
+                "Native smoke test passed\n\n$report"
+            } else {
+                "Native smoke test failed\n\n$report"
+            }
         } catch (t: Throwable) {
-            "Failed to load native library:\n${t.message}\n\n" +
-                "Run: scripts/build-android-native.sh"
+            "Failed to run native smoke test:\n${t.javaClass.simpleName}: ${t.message}\n\n" +
+                "Ensure CI/native build produced libnearby_share.so for this ABI.\n" +
+                t.stackTraceToString().take(1500)
         }
     }
 }
