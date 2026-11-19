@@ -10,8 +10,10 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ListView
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -27,6 +29,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 class MainActivity : AppCompatActivity() {
     private var pickedFiles: List<PickedFile> = emptyList()
+    private var lastPeers: List<NsdNearby.Peer> = emptyList()
     private lateinit var nsd: NsdNearby
     private val mainHandler = Handler(Looper.getMainLooper())
     private val activeControl = AtomicReference<LanLink.TransferControl?>(null)
@@ -78,20 +81,29 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        val peersList = findViewById<ListView>(R.id.peersList)
+        val hostInput = findViewById<EditText>(R.id.hostInput)
+
         nsd = NsdNearby(this)
         nsd.onPeersChanged = { peers ->
-            val peersText = findViewById<TextView>(R.id.peersText)
-            val hostInput = findViewById<EditText>(R.id.hostInput)
-            if (peers.isEmpty()) {
-                peersText.text = "Peers: (none yet)"
+            lastPeers = peers
+            val labels = if (peers.isEmpty()) {
+                listOf("(none yet — tap Discover)")
             } else {
-                peersText.text = peers.joinToString("\n") { p ->
-                    "${p.deviceName}  ${p.host}:${p.port}"
-                }
-                if (hostInput.text.isNullOrBlank()) {
-                    hostInput.setText(peers.first().host)
-                }
+                peers.map { "${it.deviceName}  ${it.host}:${it.port}" }
             }
+            peersList.adapter = ArrayAdapter(
+                this,
+                android.R.layout.simple_list_item_1,
+                labels,
+            )
+        }
+
+        peersList.setOnItemClickListener { _, _, position, _ ->
+            val peer = lastPeers.getOrNull(position) ?: return@setOnItemClickListener
+            hostInput.setText(peer.host)
+            findViewById<TextView>(R.id.statusText).text =
+                "Selected peer: ${peer.deviceName} (${peer.host}:${peer.port})"
         }
 
         val status = findViewById<TextView>(R.id.statusText)
@@ -103,7 +115,6 @@ class MainActivity : AppCompatActivity() {
         val libraryButton = findViewById<Button>(R.id.libraryButton)
         val cancelButton = findViewById<Button>(R.id.cancelButton)
         val nameInput = findViewById<EditText>(R.id.nameInput)
-        val hostInput = findViewById<EditText>(R.id.hostInput)
         val payloadInput = findViewById<EditText>(R.id.payloadInput)
 
         cancelButton.isEnabled = false
@@ -164,7 +175,6 @@ class MainActivity : AppCompatActivity() {
                         onProgress = progressTo(status),
                         onPinConfirm = LanLink.PinConfirm { peer, pin -> askPinConfirm(peer, pin) },
                         onOffer = LanLink.OfferDecision { offer -> askAcceptOffer(offer) },
-                        openSink = { fileName -> ReceivedFiles.openIncoming(fileName) },
                     )
                 } finally {
                     mainHandler.post { nsd.stopAdvertising() }
@@ -176,10 +186,11 @@ class MainActivity : AppCompatActivity() {
             val name = nameInput.text?.toString()?.ifBlank { "Client" } ?: "Client"
             val host = hostInput.text?.toString()?.trim().orEmpty()
             if (host.isEmpty()) {
-                status.text = "Enter host IP or tap Discover peers."
+                status.text = "Enter host IP or tap a discovered peer."
                 return@setOnClickListener
             }
-            val peerPort = nsd.currentPeers().firstOrNull { it.host == host }?.port
+            val peerPort = lastPeers.firstOrNull { it.host == host }?.port
+                ?: nsd.currentPeers().firstOrNull { it.host == host }?.port
                 ?: LanLink.DEFAULT_PORT
 
             val files: List<LanLink.OutgoingFile> = if (pickedFiles.isNotEmpty()) {
@@ -222,7 +233,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Both phones must confirm the same PIN before any offers. */
     private fun askPinConfirm(peerName: String, pin: String): Boolean {
         val latch = CountDownLatch(1)
         val ok = AtomicBoolean(false)
@@ -253,41 +263,57 @@ class MainActivity : AppCompatActivity() {
         return finished && ok.get()
     }
 
-    private fun askAcceptOffer(offer: LanLink.OfferRequest): Boolean {
+    private fun askAcceptOffer(offer: LanLink.OfferRequest): LanLink.OfferResult {
         val latch = CountDownLatch(1)
-        val accepted = AtomicBoolean(false)
+        val choice = AtomicReference(LanLink.OfferResult(LanLink.OfferAction.REJECT))
         val sizeLabel = if (offer.size > 0) formatSize(offer.size) else "unknown size"
-        val indexLabel = if (offer.index > 0) " (#${offer.index})" else ""
+        val partial = offer.partial
+        val partialLabel = if (partial != null) {
+            "\nPartial on disk: ${formatSize(partial.bytesReceived)} — can Resume"
+        } else {
+            ""
+        }
 
         mainHandler.post {
             if (isFinishing) {
                 latch.countDown()
                 return@post
             }
-            AlertDialog.Builder(this)
-                .setTitle("Incoming file$indexLabel")
+            val builder = AlertDialog.Builder(this)
+                .setTitle("Incoming file (#${offer.index})")
                 .setMessage(
                     "From: ${offer.peerName}\n" +
                         "PIN: ${offer.pin}\n\n" +
                         "File: ${offer.fileName}\n" +
                         "Size: $sizeLabel\n" +
-                        "Save to: NearbyShare/${offer.category.folderName}/\n\n" +
-                        "Accept this transfer?",
+                        "Save to: NearbyShare/${offer.category.folderName}/" +
+                        partialLabel,
                 )
                 .setCancelable(false)
-                .setPositiveButton("Accept") { _, _ ->
-                    accepted.set(true)
-                    latch.countDown()
-                }
                 .setNegativeButton("Reject") { _, _ ->
-                    accepted.set(false)
+                    choice.set(LanLink.OfferResult(LanLink.OfferAction.REJECT))
                     latch.countDown()
                 }
-                .show()
+                .setPositiveButton("Accept") { _, _ ->
+                    choice.set(LanLink.OfferResult(LanLink.OfferAction.ACCEPT_NEW))
+                    latch.countDown()
+                }
+            if (partial != null && partial.bytesReceived > 0) {
+                builder.setNeutralButton("Resume") { _, _ ->
+                    choice.set(
+                        LanLink.OfferResult(
+                            LanLink.OfferAction.RESUME,
+                            resumeFrom = partial,
+                        ),
+                    )
+                    latch.countDown()
+                }
+            }
+            builder.show()
         }
 
-        val finished = latch.await(120, TimeUnit.SECONDS)
-        return finished && accepted.get()
+        latch.await(120, TimeUnit.SECONDS)
+        return choice.get()
     }
 
     private fun formatSize(bytes: Long): String {
