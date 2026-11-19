@@ -232,8 +232,12 @@ object LanLink {
         val sink = ReceivedFiles.openIncoming(offer.fileName, resume)
         val hasher = NearbyCore.newHasher()
         var discardPartialOnFailure = false
-        var sawLastChunk = false
-        var expectedSeq = resume?.nextSeq ?: 0L
+        val validator = TransferIntegrityValidator(
+            sessionId = offer.sessionId,
+            expectedSize = offer.size,
+            initialBytes = resume?.bytesReceived ?: 0L,
+            initialSequence = resume?.nextSeq ?: 0L,
+        )
         try {
             // Hash the existing prefix too, so resumed files are verified end-to-end.
             if (resume != null) {
@@ -252,39 +256,24 @@ object LanLink {
                 val plain = readSealed(session, input)
                 when (NearbyCore.msgTag(plain)) {
                     5 -> {
-                        check(!sawLastChunk) { "received data after final chunk" }
                         val chunk = NearbyCore.parseChunk(plain)
-                        check(chunk.sessionId == offer.sessionId) { "chunk session mismatch" }
-                        check(chunk.fileId == 1) { "unexpected file id ${chunk.fileId}" }
-                        check(chunk.seq == expectedSeq) {
-                            "chunk sequence mismatch: expected $expectedSeq, got ${chunk.seq}"
-                        }
-                        check(chunk.data.size <= CHUNK) { "chunk exceeds maximum size" }
-                        check(sink.bytesWritten <= offer.size - chunk.data.size) {
-                            "received more bytes than offered"
-                        }
+                        validator.acceptChunk(
+                            chunk.sessionId, chunk.fileId, chunk.seq, chunk.data.size, chunk.isLast,
+                        )
                         if (chunk.data.isNotEmpty()) {
                             sink.write(chunk.data)
                             hasher.update(chunk.data)
                         }
                         sink.noteSeq(chunk.seq)
-                        expectedSeq++
-                        sawLastChunk = chunk.isLast
-                        onProgress?.onProgress(sink.bytesWritten, offer.size, "[$index] receiving")
+                        onProgress?.onProgress(validator.bytesReceived, offer.size, "[$index] receiving")
                     }
                     7 -> {
-                        check(sawLastChunk) { "completion arrived before final chunk" }
                         val complete = NearbyCore.parseComplete(plain)
-                        check(complete.sessionId == offer.sessionId) { "completion session mismatch" }
-                        check(complete.fileId == 1) { "completion file id mismatch" }
-                        check(sink.bytesWritten == offer.size) {
-                            "file size mismatch: expected ${offer.size}, received ${sink.bytesWritten}"
-                        }
                         val actualHash = hasher.finalizeHash()
-                        if (!actualHash.contentEquals(complete.checksum)) {
-                            discardPartialOnFailure = true
-                            error("file checksum mismatch; received file discarded")
-                        }
+                        discardPartialOnFailure = true
+                        validator.verifyComplete(
+                            complete.sessionId, complete.fileId, complete.checksum, actualHash,
+                        )
                         val save = sink.finish()
                         return "OK ${save.fileName} bytes=${save.bytes} resumed=${resume != null}"
                     }
