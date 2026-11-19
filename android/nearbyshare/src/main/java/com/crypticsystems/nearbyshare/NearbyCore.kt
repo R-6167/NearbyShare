@@ -28,7 +28,11 @@ object NearbyCore {
             sid: ByteArray, sidLen: Int, name: ByteArray, nameLen: Int, size: Long, out: ByteArray, outLen: Int,
         ): Int
 
-        fun nearby_c_msg_encode_response(sid: ByteArray, sidLen: Int, accepted: Int, out: ByteArray, outLen: Int): Int
+        fun nearby_c_msg_encode_response(
+            sid: ByteArray, sidLen: Int, accepted: Int,
+            reason: ByteArray?, reasonLen: Int,
+            out: ByteArray, outLen: Int,
+        ): Int
 
         fun nearby_c_msg_encode_chunk(
             sid: ByteArray, sidLen: Int, fileId: Int, seq: Long, data: ByteArray, dataLen: Int, isLast: Int,
@@ -50,7 +54,11 @@ object NearbyCore {
             sizeOut: LongByReference,
         ): Int
 
-        fun nearby_c_msg_parse_response(data: ByteArray, dataLen: Int, acceptedOut: IntByReference): Int
+        fun nearby_c_msg_parse_response(
+            data: ByteArray, dataLen: Int,
+            acceptedOut: IntByReference,
+            reasonOut: ByteArray?, reasonCap: Int, reasonLenOut: IntByReference?,
+        ): Int
 
         fun nearby_c_msg_parse_chunk(
             data: ByteArray, dataLen: Int, seqOut: LongByReference, isLastOut: IntByReference,
@@ -149,9 +157,16 @@ object NearbyCore {
         return readBytes { o, l -> lib().nearby_c_msg_encode_offer(sid, sid.size, name, name.size, size, o, l) }
     }
 
-    fun encodeResponse(sessionId: String, accepted: Boolean): ByteArray {
+    fun encodeResponse(sessionId: String, accepted: Boolean, reason: String? = null): ByteArray {
         val sid = sessionId.toByteArray(StandardCharsets.UTF_8)
-        return readBytes { o, l -> lib().nearby_c_msg_encode_response(sid, sid.size, if (accepted) 1 else 0, o, l) }
+        val reasonBytes = reason?.toByteArray(StandardCharsets.UTF_8)
+        return readBytes { o, l ->
+            lib().nearby_c_msg_encode_response(
+                sid, sid.size, if (accepted) 1 else 0,
+                reasonBytes, reasonBytes?.size ?: 0,
+                o, l,
+            )
+        }
     }
 
     fun encodeChunk(sessionId: String, fileId: Int, seq: Long, data: ByteArray, isLast: Boolean): ByteArray {
@@ -203,12 +218,25 @@ object NearbyCore {
         )
     }
 
-    fun parseResponseAccepted(data: ByteArray): Boolean {
+    data class ResponseInfo(val accepted: Boolean, val reason: String?)
+
+    fun parseResponse(data: ByteArray): ResponseInfo {
         val acc = IntByReference()
-        val rc = lib().nearby_c_msg_parse_response(data, data.size, acc)
+        val reasonBuf = ByteArray(256)
+        val reasonLen = IntByReference()
+        val rc = lib().nearby_c_msg_parse_response(
+            data, data.size, acc, reasonBuf, reasonBuf.size, reasonLen,
+        )
         if (rc != 0) error("parseResponse $rc")
-        return acc.value != 0
+        val reason = if (reasonLen.value > 0) {
+            String(reasonBuf, 0, reasonLen.value, StandardCharsets.UTF_8)
+        } else {
+            null
+        }
+        return ResponseInfo(acc.value != 0, reason)
     }
+
+    fun parseResponseAccepted(data: ByteArray): Boolean = parseResponse(data).accepted
 
     data class ChunkInfo(val seq: Long, val isLast: Boolean, val data: ByteArray)
 
