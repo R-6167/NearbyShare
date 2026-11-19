@@ -1,10 +1,12 @@
 package com.crypticsystems.warpair
 
 import com.crypticsystems.warpair.core.NearbyCore
+import java.io.Closeable
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.EOFException
 import java.io.InputStream
+import java.io.OutputStream
 import java.net.ConnectException
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
@@ -85,8 +87,19 @@ object LanLink {
             onListening?.invoke(server.localPort)
             onProgress?.onProgress(0, 0, "listening on ${server.localPort} — waiting for peer")
             val socket = server.accept(); socket.soTimeout = 180_000
-            return socket.use { runHost(it, deviceName, control, onProgress, onPinConfirm, onOffer) }
+            return socket.use { accepted ->
+                hostConnected(SocketTransferConnection(accepted), deviceName, control, onProgress, onPinConfirm, onOffer)
+            }
         }
+    }
+
+    /** Run the receiver protocol over any established bidirectional transport. */
+    fun hostConnected(
+        connection: TransferConnection, deviceName: String,
+        control: TransferControl = TransferControl(), onProgress: Progress? = null,
+        onPinConfirm: PinConfirm, onOffer: OfferDecision,
+    ): String = connection.use {
+        runHost(it.input, it.output, deviceName, control, onProgress, onPinConfirm, onOffer)
     }
 
     fun connectOnce(
@@ -117,7 +130,7 @@ object LanLink {
                     e,
                 )
             }
-            return runClient(socket, deviceName, files, control, onProgress, onPinConfirm)
+            return sendConnected(SocketTransferConnection(socket), deviceName, files, control, onProgress, onPinConfirm)
         }
     }
 
@@ -131,13 +144,12 @@ object LanLink {
     } catch (_: Throwable) { "(unavailable)" }
 
     private fun runHost(
-        socket: Socket, deviceName: String, control: TransferControl, onProgress: Progress?,
+        inputStream: InputStream, outputStream: OutputStream, deviceName: String,
+        control: TransferControl, onProgress: Progress?,
         onPinConfirm: PinConfirm, onOffer: OfferDecision,
     ): String {
-        socket.tcpNoDelay = true
-        socket.keepAlive = true
-        val input = DataInputStream(socket.getInputStream())
-        val output = DataOutputStream(socket.getOutputStream())
+        val input = DataInputStream(inputStream)
+        val output = DataOutputStream(outputStream)
         NearbyCore.createSession(deviceName, false).use { session ->
             session.completeHandshake(readFrame(input))
             writeFrame(output, session.beginHandshake())
@@ -162,12 +174,25 @@ object LanLink {
         }
     }
 
+    /** Run the sender protocol over any established bidirectional transport. */
+    fun sendConnected(
+        connection: TransferConnection, deviceName: String, files: List<OutgoingFile>,
+        control: TransferControl = TransferControl(), onProgress: Progress? = null,
+        onPinConfirm: PinConfirm,
+    ): String {
+        require(files.isNotEmpty())
+        return connection.use {
+            runClient(it.input, it.output, deviceName, files, control, onProgress, onPinConfirm)
+        }
+    }
+
     private fun runClient(
-        socket: Socket, deviceName: String, files: List<OutgoingFile>, control: TransferControl,
+        inputStream: InputStream, outputStream: OutputStream, deviceName: String,
+        files: List<OutgoingFile>, control: TransferControl,
         onProgress: Progress?, onPinConfirm: PinConfirm,
     ): String {
-        val input = DataInputStream(socket.getInputStream())
-        val output = DataOutputStream(socket.getOutputStream())
+        val input = DataInputStream(inputStream)
+        val output = DataOutputStream(outputStream)
         NearbyCore.createSession(deviceName, true).use { session ->
             writeFrame(output, session.beginHandshake())
             session.completeHandshake(readFrame(input))
