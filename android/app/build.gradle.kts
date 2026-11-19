@@ -14,8 +14,6 @@ android {
         versionCode = 3
         versionName = "0.2.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        // Helps some AGP paths name outputs with WarPair prefix
-        setProperty("archivesBaseName", "WarPair")
     }
 
     buildTypes {
@@ -40,15 +38,11 @@ android {
     buildFeatures {
         viewBinding = true
     }
+}
 
-    // Explicit APK file name: WarPair-debug.apk / WarPair-release.apk
-    applicationVariants.all {
-        val variant = this
-        outputs.all {
-            val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
-            output.outputFileName = "WarPair-${variant.buildType.name}.apk"
-        }
-    }
+// Output: WarPair-debug.apk (and release variant)
+base {
+    archivesName.set("WarPair")
 }
 
 dependencies {
