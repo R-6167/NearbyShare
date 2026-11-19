@@ -1,131 +1,51 @@
-# Android project (CLI-first)
+# Android project (CLI + GitHub Actions)
 
-You do **not** need Android Studio. Build and install a debug APK from the terminal.
+You do **not** need Android Studio. Prefer **GitHub Actions artifacts** if the machine is limited.
 
-```
-android/
-├── app/              # Demo APK host
-├── nearbyshare/      # Library: jniLibs + UniFFI Kotlin + JNA
-└── …
-```
+## Test on your phone via GitHub (recommended)
 
-## One-time machine setup
+1. Push to `main` (or run **Actions → Android APK → Run workflow**).
+2. Open the successful run → **Artifacts** → download **`NearbyShare-demo-debug`**.
+3. Unzip → `app-debug.apk`.
+4. Copy to the phone and install (or `adb install -r app-debug.apk`).
+5. Open **NearbyShare Demo** → **Run core smoke test**.
 
-### 1. JDK 17
+You should see a report starting with `OK` plus version, fingerprint, PIN, and `seal_open=ok`.
 
-```bash
-# Ubuntu/Debian
-sudo apt-get update && sudo apt-get install -y openjdk-17-jdk unzip wget curl
-
-# macOS (Homebrew)
-brew install openjdk@17
-```
-
-### 2. Android SDK (no Studio)
-
-From the **repo root**:
+## Local CLI build (optional)
 
 ```bash
 chmod +x scripts/*.sh
-./scripts/setup-android-sdk.sh
+./scripts/setup-android-sdk.sh   # once
+./scripts/build-apk.sh           # native + APK
+./scripts/install-apk.sh         # adb
 ```
 
-This downloads Google command-line tools into `~/Android/Sdk` (or `$ANDROID_HOME`), installs:
+APK path: `android/app/build/outputs/apk/debug/app-debug.apk`
 
-- `platform-tools` (adb)
-- `platforms;android-35`
-- `build-tools;35.0.0`
-- NDK
+## What the smoke test covers
 
-and writes `android/local.properties`.
+The demo calls a stable **C ABI** inside `libnearby_share.so` (via JNA):
 
-### 3. Rust tooling (for native `.so`)
+- identity keygen
+- session handshake
+- matching PIN
+- encrypt / decrypt round-trip
 
-```bash
-rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
-cargo install cargo-ndk
-cargo install uniffi-bindgen --version 0.28.3
-```
-
-## Build a debug APK
-
-```bash
-# From repo root – does SDK check, native build, Gradle assembleDebug
-./scripts/build-apk.sh
-```
-
-Or stepwise:
-
-```bash
-make sdk        # once
-make wrapper    # once (downloads Gradle, creates android/gradlew)
-make native     # Rust .so + UniFFI Kotlin
-make apk        # same as ./scripts/build-apk.sh
-```
-
-**Output:**
-
-```text
-android/app/build/outputs/apk/debug/app-debug.apk
-```
-
-Skip Rust (UI-only compile):
-
-```bash
-SKIP_NATIVE=1 ./scripts/build-apk.sh
-```
-
-## Install on your phone
-
-1. On the phone: **Developer options → USB debugging** ON  
-2. Connect USB (or use wireless adb)
-3. Trust the computer when prompted
-
-```bash
-./scripts/install-apk.sh
-# or in one step:
-INSTALL=1 ./scripts/build-apk.sh
-# or manually:
-adb install -r android/app/build/outputs/apk/debug/app-debug.apk
-```
-
-Copy the APK to the phone any other way (Drive, Telegram, `scp`) and open it — allow “Install unknown apps” for that source.
+No `uniffi-bindgen` step is required for this path.
 
 ## Modules
 
 | Module | Role |
 |--------|------|
-| `:nearbyshare` | `libnearby_share.so` + UniFFI Kotlin + JNA |
-| `:app` | Debug APK you install |
-
-## After UniFFI generate
-
-`scripts/build-android-native.sh` / `build-apk.sh` place generated Kotlin under:
-
-```text
-nearbyshare/src/main/java/com/crypticsystems/nearbyshare/
-```
-
-Then from the app:
-
-```kotlin
-import com.crypticsystems.nearbyshare.libraryHello
-import com.crypticsystems.nearbyshare.FfiIdentity
-
-libraryHello()
-FfiIdentity.generate("Android")
-```
-
-## CI
-
-GitHub Actions workflow `.github/workflows/android-apk.yml` builds the debug APK and uploads it as an artifact on pushes to `main`.
+| `:nearbyshare` | `.so` + `NearbyCore` JNA bridge |
+| `:app` | Demo UI |
 
 ## Troubleshooting
 
-| Problem | Fix |
+| Symptom | Fix |
 |---------|-----|
-| `SDK location not found` | `./scripts/setup-android-sdk.sh` |
-| `gradlew: not found` | `./scripts/bootstrap-gradle-wrapper.sh` |
-| `libnearby_share not found` | `./scripts/build-android-native.sh` (needs NDK + cargo-ndk) |
-| `adb devices` empty | Enable USB debugging; try another cable/port |
-| JDK errors | Use Java 17: `java -version` |
+| CI red on `cargo test` | Check Rust job logs first |
+| CI red on `cargo ndk` | NDK path / targets |
+| App: library not found | APK built without jniLibs – use Actions artifact from green run |
+| `adb devices` empty | USB debugging + authorize PC |
