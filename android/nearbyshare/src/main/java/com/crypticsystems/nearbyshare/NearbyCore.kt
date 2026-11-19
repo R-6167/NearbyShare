@@ -23,9 +23,6 @@ object NearbyCore {
         fun nearby_c_session_open(handle: Long, cipher: ByteArray, cipherLen: Int, out: ByteArray, outLen: Int): Int
 
         fun nearby_c_frame_encode(payload: ByteArray, payloadLen: Int, out: ByteArray, outLen: Int): Int
-        fun nearby_c_frame_try_decode(
-            buf: ByteArray, bufLen: Int, out: ByteArray, outLen: Int, consumedOut: IntByReference,
-        ): Int
 
         fun nearby_c_msg_encode_offer(
             sid: ByteArray, sidLen: Int, name: ByteArray, nameLen: Int, size: Long, out: ByteArray, outLen: Int,
@@ -43,7 +40,9 @@ object NearbyCore {
         fun nearby_c_msg_tag(data: ByteArray, dataLen: Int): Int
 
         fun nearby_c_msg_parse_offer(
-            data: ByteArray, dataLen: Int, sidOut: ByteArray, sidLen: Int, nameOut: ByteArray, nameLen: Int,
+            data: ByteArray, dataLen: Int,
+            sidOut: ByteArray, sidCap: Int, sidLenOut: IntByReference,
+            nameOut: ByteArray, nameCap: Int, nameLenOut: IntByReference,
             sizeOut: LongByReference,
         ): Int
 
@@ -166,19 +165,21 @@ object NearbyCore {
     fun parseOffer(data: ByteArray): OfferInfo {
         val sid = ByteArray(256)
         val name = ByteArray(512)
+        val sidLen = IntByReference()
+        val nameLen = IntByReference()
         val size = LongByReference()
-        val rc = lib().nearby_c_msg_parse_offer(data, data.size, sid, sid.size, name, name.size, size)
+        val rc = lib().nearby_c_msg_parse_offer(
+            data, data.size,
+            sid, sid.size, sidLen,
+            name, name.size, nameLen,
+            size,
+        )
         if (rc != 0) error("parseOffer $rc")
-        // sid/name written as raw bytes without length return — use C strlen-style via first write_bytes length
-        // Our C API write_bytes returns length only as function result of write_bytes internal; parse returns 0.
-        // Re-parse via native tag path: read until we used fixed buffers with explicit lengths from a second approach.
-        // Workaround: encode used UTF-8; we stored full strings — use null-free scan is wrong.
-        // Fix: call encode path is fine; for parse, re-implement by returning lengths — for now decode by
-        // re-reading with nearby by treating returned 0 and using hash of protocol in Kotlin-side Message…
-        // Simpler fix below: use oversized buffers and find used length via a new API. Temporary:
-        // We change approach - store session id in offer parse by using the fact write_bytes copies exact bytes
-        // without null terminator. Add length outs in a follow-up; for demo use fixed "xfer-1" and file from UI.
-        return OfferInfo("xfer-1", "file.bin", size.value)
+        return OfferInfo(
+            String(sid, 0, sidLen.value, StandardCharsets.UTF_8),
+            String(name, 0, nameLen.value, StandardCharsets.UTF_8),
+            size.value,
+        )
     }
 
     fun parseResponseAccepted(data: ByteArray): Boolean {
