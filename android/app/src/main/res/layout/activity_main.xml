@@ -38,8 +38,22 @@
             android:id="@+id/hostInput"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="Peer IP (Join)"
+            android:hint="Peer IP (auto-filled by Discover)"
             android:inputType="text" />
+
+        <Button
+            android:id="@+id/discoverButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Discover peers (mDNS)" />
+
+        <TextView
+            android:id="@+id/peersText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Peers: (none yet)"
+            android:textIsSelectable="true"
+            android:textSize="13sp" />
 
         <Button
             android:id="@+id/pickFileButton"
@@ -87,7 +101,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:text="Host saves into app Downloads/NearbyShare and public Downloads/NearbyShare when allowed. Max demo size 64 MiB."
+            android:text="Host advertises via mDNS. Discover fills the first peer IP. Progress updates while transferring. Max 64 MiB."
             android:textSize="13sp" />
     </LinearLayout>
 </ScrollView>
