@@ -65,20 +65,20 @@
             android:id="@+id/pickFileButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Pick file to send" />
+            android:text="Pick file(s) to send" />
 
         <TextView
             android:id="@+id/pickedFileText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="No file selected (Join will send the text below as note.txt)"
+            android:text="No files selected (Join will send the text below as note.txt)"
             android:textSize="13sp" />
 
         <EditText
             android:id="@+id/payloadInput"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="Fallback text → note.txt if no file picked"
+            android:hint="Fallback text → note.txt if no files picked"
             android:inputType="textMultiLine"
             android:minLines="2"
             android:text="Hello from NearbyShare" />
@@ -107,7 +107,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:text="Host shows Accept/Reject for each offer. Open library to browse NearbyShare folders."
+            android:text="Pick multiple files; host accepts/rejects each. One handshake, then sequential transfers."
             android:textSize="13sp" />
     </LinearLayout>
 </ScrollView>
