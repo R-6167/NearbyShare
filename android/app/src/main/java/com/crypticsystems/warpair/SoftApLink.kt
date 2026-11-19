@@ -93,7 +93,7 @@ class SoftApLink(context: Context) {
             val preferred = interfaces.filter { ni ->
                 val name = ni.name.lowercase()
                 name.contains("ap") || name.contains("softap") ||
-                    name.contains("wlan1") || name.contains("swlan")
+                    name.contains("wlan") || name.contains("swlan")
             }
             val candidates = (preferred + interfaces.filterNot { it in preferred }).flatMap { ni ->
                 ni.inetAddresses.toList().filterIsInstance<Inet4Address>()
@@ -102,7 +102,7 @@ class SoftApLink(context: Context) {
             }
             candidates.firstOrNull { (name, _) ->
                 val n = name.lowercase()
-                n.contains("ap") || n.contains("softap") || n.contains("wlan1") || n.contains("swlan")
+                n.contains("ap") || n.contains("softap") || n.contains("wlan") || n.contains("swlan")
             }?.second ?: candidates.singleOrNull()?.second
         } catch (_: Throwable) {
             null
