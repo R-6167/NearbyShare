@@ -10,6 +10,7 @@ import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.crypticsystems.nearbyshare.NearbyCore
+import java.io.ByteArrayInputStream
 import java.net.NetworkInterface
 
 class MainActivity : AppCompatActivity() {
@@ -29,9 +30,11 @@ class MainActivity : AppCompatActivity() {
         } catch (_: SecurityException) {
         }
         try {
-            picked = ReceivedFiles.readPicked(this, uri)
+            picked = ReceivedFiles.readPickedMeta(this, uri)
+            val sizeLabel = if (picked!!.size >= 0) "${picked!!.size} bytes" else "size unknown"
+            val cat = ReceivedFiles.categoryFor(picked!!.displayName).folderName
             findViewById<TextView>(R.id.pickedFileText).text =
-                "Selected: ${picked!!.displayName} (${picked!!.bytes.size} bytes)"
+                "Selected: ${picked!!.displayName} ($sizeLabel) → would land in $cat on receiver"
         } catch (t: Throwable) {
             picked = null
             findViewById<TextView>(R.id.pickedFileText).text =
@@ -43,10 +46,9 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        val libraryRoot = ReceivedFiles.ensureLibrary(this)
+
         nsd = NsdNearby(this)
-        nsd.onStatus = { msg ->
-            // Soft status line without wiping transfer results mid-flight unless idle.
-        }
         nsd.onPeersChanged = { peers ->
             val peersText = findViewById<TextView>(R.id.peersText)
             val hostInput = findViewById<EditText>(R.id.hostInput)
@@ -72,8 +74,14 @@ class MainActivity : AppCompatActivity() {
         val hostInput = findViewById<EditText>(R.id.hostInput)
         val payloadInput = findViewById<EditText>(R.id.payloadInput)
 
-        status.text =
-            "IPs:\n${localIpv4List()}\n\nHost advertises mDNS. Discover fills peer IP. Pick a file, then Join."
+        status.text = buildString {
+            appendLine("Library:")
+            appendLine(libraryRoot.absolutePath)
+            appendLine("Folders: Music, Videos, Images, Documents, Archives, Other")
+            appendLine()
+            appendLine("IPs:")
+            append(localIpv4List())
+        }
 
         pickFileButton.setOnClickListener {
             openDocument.launch(arrayOf("*/*"))
@@ -99,9 +107,10 @@ class MainActivity : AppCompatActivity() {
                     LanLink.hostOnce(
                         deviceName = name,
                         onProgress = progressTo(status),
-                    ) { fileName, data ->
-                        ReceivedFiles.saveReceived(this@MainActivity, fileName, data).summary()
-                    }
+                        openSink = { fileName ->
+                            ReceivedFiles.openIncoming(this@MainActivity, fileName)
+                        },
+                    )
                 } finally {
                     mainHandler.post { nsd.stopAdvertising() }
                 }
@@ -116,26 +125,37 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             val localPicked = picked
-            val fileName: String
-            val bytes: ByteArray
-            if (localPicked != null) {
-                fileName = localPicked.displayName
-                bytes = localPicked.bytes
-            } else {
-                fileName = "note.txt"
-                bytes = (payloadInput.text?.toString() ?: "").toByteArray(Charsets.UTF_8)
-            }
             val peerPort = nsd.currentPeers().firstOrNull { it.host == host }?.port
                 ?: LanLink.DEFAULT_PORT
+
             runBg(listOf(smokeButton, hostButton, joinButton, discoverButton), status) {
-                LanLink.connectOnce(
-                    host = host,
-                    port = peerPort,
-                    deviceName = name,
-                    fileName = fileName,
-                    fileBytes = bytes,
-                    onProgress = progressTo(status),
-                )
+                if (localPicked != null) {
+                    ReceivedFiles.openPickedStream(this@MainActivity, localPicked.uri).use { stream ->
+                        LanLink.connectOnce(
+                            host = host,
+                            port = peerPort,
+                            deviceName = name,
+                            fileName = localPicked.displayName,
+                            fileSize = localPicked.size,
+                            inputStream = stream,
+                            onProgress = progressTo(status),
+                        )
+                    }
+                } else {
+                    val text = payloadInput.text?.toString() ?: ""
+                    val bytes = text.toByteArray(Charsets.UTF_8)
+                    ByteArrayInputStream(bytes).use { stream ->
+                        LanLink.connectOnce(
+                            host = host,
+                            port = peerPort,
+                            deviceName = name,
+                            fileName = "note.txt",
+                            fileSize = bytes.size.toLong(),
+                            inputStream = stream,
+                            onProgress = progressTo(status),
+                        )
+                    }
+                }
             }
         }
     }
@@ -151,7 +171,7 @@ class MainActivity : AppCompatActivity() {
                 val pct = (done * 100 / total).toInt().coerceIn(0, 100)
                 "$phase  $done/$total ($pct%)"
             } else {
-                phase
+                "$phase  $done bytes"
             }
             mainHandler.post { status.text = line }
         }
