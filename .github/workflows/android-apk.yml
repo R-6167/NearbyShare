@@ -7,6 +7,13 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  ANDROID_HOME: ${{ github.workspace }}/android-sdk
+  ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
+  # Pin NDK for cargo-ndk
+  NDK_VERSION: "27.2.12479018"
+  CMDLINE_TOOLS_VERSION: "11076708"
+
 jobs:
   rust-test:
     runs-on: ubuntu-latest
@@ -28,40 +35,58 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install SDK packages
+      - name: Install Android command-line tools
         run: |
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "platform-tools"
-          yes | sdkmanager --licenses || true
+          set -euo pipefail
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          cd /tmp
+          curl -fsSL -o cmdline-tools.zip \
+            "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip"
+          unzip -q cmdline-tools.zip
+          # Expected layout: $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager
+          rm -rf "$ANDROID_HOME/cmdline-tools/latest"
+          mv cmdline-tools "$ANDROID_HOME/cmdline-tools/latest"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --version
+
+      - name: Accept licenses and install SDK packages
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/tmp/sdk-licenses.txt || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;${NDK_VERSION}"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          ls -la "$ANDROID_HOME/ndk/${NDK_VERSION}" | head
 
       - name: Write local.properties
-        run: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+          cat android/local.properties
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
 
-      - name: Cache cargo
+      - name: Cache cargo registry
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked || cargo install cargo-ndk
 
       - name: Build native libraries (all ABIs)
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_ROOT }}
         run: |
-          export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/27.2.12479018}"
-          if [ ! -d "$ANDROID_NDK_HOME" ]; then
-            ANDROID_NDK_HOME="$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)"
-            export ANDROID_NDK_HOME
-          fi
+          set -euo pipefail
+          export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/$NDK_VERSION}"
+          echo "ANDROID_HOME=$ANDROID_HOME"
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          test -d "$ANDROID_NDK_HOME"
           chmod +x scripts/*.sh
-          # jniLibs only – UniFFI generate is optional for smoke (C ABI)
           ROOT="$PWD"
           JNI_DIR="$ROOT/android/nearbyshare/src/main/jniLibs"
           mkdir -p "$JNI_DIR"
@@ -70,7 +95,9 @@ jobs:
           echo "jniLibs:"; find "$JNI_DIR" -name "*.so" -type f
 
       - name: Bootstrap Gradle wrapper
-        run: ./scripts/bootstrap-gradle-wrapper.sh
+        run: |
+          chmod +x scripts/bootstrap-gradle-wrapper.sh
+          ./scripts/bootstrap-gradle-wrapper.sh
 
       - name: Assemble debug APK
         working-directory: android
