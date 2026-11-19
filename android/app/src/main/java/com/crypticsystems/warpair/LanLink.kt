@@ -158,7 +158,7 @@ object LanLink {
                 index++; reports += receiveOne(session, input, output, peer, pin, offerPlain, index, control, onProgress, onOffer)
             }
             if (reports.isEmpty()) return "No files from $peer"
-            return "BATCH OK (receiver) — ${reports.size}\\n" + reports.joinToString("\\n---\\n")
+            return "BATCH OK (receiver) — ${reports.size}\n" + reports.joinToString("\n---\n")
         }
     }
 
@@ -177,7 +177,7 @@ object LanLink {
                 control.check()
                 sendOne(session, input, output, peer, pin, f, i + 1, files.size, control, onProgress)
             }
-            return "BATCH OK (sender) — ${files.size}\\n" + reports.joinToString("\\n---\\n")
+            return "BATCH OK (sender) — ${files.size}\n" + reports.joinToString("\n---\n")
         }
     }
 
