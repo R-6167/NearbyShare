@@ -103,11 +103,18 @@
                 android:text="Join + send" />
         </LinearLayout>
 
+        <Button
+            android:id="@+id/cancelButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:enabled="false"
+            android:text="Cancel transfer" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:text="Pick multiple files; host accepts/rejects each. One handshake, then sequential transfers."
+            android:text="After connect, both phones confirm the same PIN. Use Cancel to stop a running transfer."
             android:textSize="13sp" />
     </LinearLayout>
 </ScrollView>
