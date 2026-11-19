@@ -55,6 +55,9 @@ internal class TransferIntegrityValidator(
         check(bytesReceived == expectedSize) {
             "file size mismatch: expected $expectedSize, received $bytesReceived"
         }
+        check(expectedChecksum.size == 32 && actualChecksum.size == 32) {
+            "invalid BLAKE3 checksum length"
+        }
         check(actualChecksum.contentEquals(expectedChecksum)) {
             "file checksum mismatch; received file discarded"
         }
