@@ -22,6 +22,8 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.crypticsystems.warpair.core.NearbyCore
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import java.io.ByteArrayInputStream
 import java.net.NetworkInterface
 import java.util.concurrent.CountDownLatch
@@ -67,6 +69,25 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult(),
     ) { refreshLibraryStatus() }
 
+    private val requestNearbyWifiPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        findViewById<TextView>(R.id.statusText)?.text = if (granted) {
+            "Nearby Wi‑Fi permission granted. Tap Start SoftAP again."
+        } else {
+            "Nearby Wi‑Fi permission is required to start a hotspot."
+        }
+    }
+
+    private val scanQrLauncher = registerForActivityResult(ScanContract()) { result ->
+        val scanned = result.contents
+        if (scanned.isNullOrBlank()) {
+            findViewById<TextView>(R.id.statusText)?.text = "QR scan cancelled."
+        } else {
+            applyScannedQr(scanned)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -74,6 +95,7 @@ class MainActivity : AppCompatActivity() {
 
         val peersList = findViewById<ListView>(R.id.peersList)
         val hostInput = findViewById<EditText>(R.id.hostInput)
+        val portInput = findViewById<EditText>(R.id.portInput)
         val status = findViewById<TextView>(R.id.statusText)
         val smokeButton = findViewById<Button>(R.id.smokeButton)
         val hostButton = findViewById<Button>(R.id.hostButton)
@@ -85,11 +107,13 @@ class MainActivity : AppCompatActivity() {
         val softApButton = findViewById<Button>(R.id.softApButton)
         val showQrButton = findViewById<Button>(R.id.showQrButton)
         val applyQrButton = findViewById<Button>(R.id.applyQrButton)
+        val scanQrButton = findViewById<Button>(R.id.scanQrButton)
         val qrPayloadInput = findViewById<EditText>(R.id.qrPayloadInput)
         val nameInput = findViewById<EditText>(R.id.nameInput)
         val payloadInput = findViewById<EditText>(R.id.payloadInput)
 
         nsd = NsdNearby(this)
+        nsd.onStatus = { message -> status.text = message }
         nsd.onPeersChanged = { peers ->
             lastPeers = peers
             val labels = if (peers.isEmpty()) listOf("(none yet)")
@@ -99,6 +123,7 @@ class MainActivity : AppCompatActivity() {
         peersList.setOnItemClickListener { _, _, position, _ ->
             val peer = lastPeers.getOrNull(position) ?: return@setOnItemClickListener
             hostInput.setText(peer.host)
+            portInput.setText(peer.port.toString())
             status.text = "Selected: ${peer.deviceName} (${peer.host}:${peer.port})"
         }
 
@@ -109,6 +134,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         softApButton.setOnClickListener {
+            if (Build.VERSION.SDK_INT >= 33 &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.NEARBY_WIFI_DEVICES)
+                    != PackageManager.PERMISSION_GRANTED
+            ) {
+                requestNearbyWifiPermission.launch(Manifest.permission.NEARBY_WIFI_DEVICES)
+                return@setOnClickListener
+            }
             runBg(listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton, softApButton), cancelButton, status) {
                 softAp?.stop()
                 softAp = SoftApLink(this@MainActivity)
@@ -122,8 +154,12 @@ class MainActivity : AppCompatActivity() {
                         deviceName = nameInput.text?.toString(),
                     ),
                 )
-                mainHandler.post { qrPayloadInput.setText(uri) }
-                "SoftAP ON\nSSID=${creds.ssid}\nPASS=${creds.password}\nJoin Wi‑Fi then TCP to ${creds.suggestedHostIp}\n\nQR payload filled."
+                mainHandler.post {
+                    hostInput.setText(creds.suggestedHostIp)
+                    portInput.setText(LanLink.DEFAULT_PORT.toString())
+                    qrPayloadInput.setText(uri)
+                }
+                "SoftAP ON\nSSID=${creds.ssid}\nPASS=${creds.password}\nHost address: ${creds.suggestedHostIp}\nNext: tap Host, then connect the other phone to this Wi‑Fi and use the QR details."
             }
         }
 
@@ -135,7 +171,7 @@ class MainActivity : AppCompatActivity() {
                 ?: QrBootstrap.encodeUri(
                     QrBootstrap.Payload(
                         host = host,
-                        port = LanLink.DEFAULT_PORT,
+                        port = portInput.text?.toString()?.toIntOrNull() ?: LanLink.DEFAULT_PORT,
                         deviceName = nameInput.text?.toString(),
                     ),
                 )
@@ -144,10 +180,21 @@ class MainActivity : AppCompatActivity() {
             showQrDialog(bmp, uri)
         }
 
+        scanQrButton.setOnClickListener {
+            val options = ScanOptions().apply {
+                setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                setPrompt("Scan the QR code displayed on the other WarPair device")
+                setBeepEnabled(false)
+                setOrientationLocked(false)
+            }
+            scanQrLauncher.launch(options)
+        }
+
         applyQrButton.setOnClickListener {
             try {
                 val p = QrBootstrap.parseUri(qrPayloadInput.text?.toString().orEmpty())
                 hostInput.setText(p.host)
+                portInput.setText(p.port.toString())
                 status.text = buildString {
                     appendLine("QR applied: ${p.host}:${p.port}")
                     p.ssid?.let { appendLine("SSID=$it (connect to this Wi‑Fi first)") }
@@ -185,14 +232,25 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             val name = nameInput.text?.toString()?.ifBlank { "Host" } ?: "Host"
-            nsd.advertise(name, LanLink.DEFAULT_PORT)
+            val listenPort = portInput.text?.toString()?.toIntOrNull() ?: LanLink.DEFAULT_PORT
+            if (listenPort !in 1..65535) {
+                status.text = "Enter a valid listening port (1–65535)."
+                return@setOnClickListener
+            }
             val control = LanLink.TransferControl()
             runBg(listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton, softApButton), cancelButton, status, control) {
                 try {
                     LanLink.hostOnce(
                         deviceName = name,
+                        port = listenPort,
                         control = control,
                         onProgress = progressTo(status),
+                        onListening = { boundPort ->
+                            mainHandler.post {
+                                nsd.advertise(name, boundPort)
+                                status.text = "Waiting for a peer on port $boundPort\n\nThis phone's addresses:\n${localIpv4List()}\n\nBoth phones must use the same Wi‑Fi network."
+                            }
+                        },
                         onPinConfirm = LanLink.PinConfirm { peer, pin -> askPinConfirm(peer, pin) },
                         onOffer = LanLink.OfferDecision { offer -> askAcceptOffer(offer) },
                     )
@@ -209,7 +267,11 @@ class MainActivity : AppCompatActivity() {
                 status.text = "Enter host IP, tap a peer, or Apply QR."
                 return@setOnClickListener
             }
-            val peerPort = lastPeers.firstOrNull { it.host == host }?.port ?: LanLink.DEFAULT_PORT
+            val peerPort = portInput.text?.toString()?.toIntOrNull() ?: LanLink.DEFAULT_PORT
+            if (peerPort !in 1..65535) {
+                status.text = "Enter a valid TCP port (1–65535)."
+                return@setOnClickListener
+            }
             val files = if (pickedFiles.isNotEmpty()) {
                 pickedFiles.map { p ->
                     LanLink.OutgoingFile(p.displayName, p.size) {
@@ -240,6 +302,25 @@ class MainActivity : AppCompatActivity() {
         handleWarpairIntent(intent)
     }
 
+    private fun applyScannedQr(raw: String) {
+        try {
+            val payload = QrBootstrap.parseUri(raw)
+            findViewById<EditText>(R.id.qrPayloadInput).setText(raw)
+            findViewById<EditText>(R.id.hostInput).setText(payload.host)
+            findViewById<EditText>(R.id.portInput).setText(payload.port.toString())
+            findViewById<TextView>(R.id.statusText).text = buildString {
+                appendLine("WarPair QR scanned successfully.")
+                appendLine("Peer: ${payload.deviceName ?: "WarPair device"}")
+                appendLine("Address: ${payload.host}:${payload.port}")
+                payload.ssid?.let { appendLine("Wi‑Fi: $it — join this network before connecting.") }
+                append("Ready. Choose files if needed, then tap Connect / Send.")
+            }
+        } catch (t: Throwable) {
+            findViewById<TextView>(R.id.statusText).text =
+                "This QR code is not a valid WarPair connection code: ${t.message}"
+        }
+    }
+
     private fun handleWarpairIntent(intent: Intent?) {
         val data = intent?.data?.toString() ?: return
         if (!data.startsWith("warpair://", ignoreCase = true)) return
@@ -247,6 +328,7 @@ class MainActivity : AppCompatActivity() {
             val p = QrBootstrap.parseUri(data)
             findViewById<EditText>(R.id.qrPayloadInput).setText(data)
             findViewById<EditText>(R.id.hostInput).setText(p.host)
+            findViewById<EditText>(R.id.portInput).setText(p.port.toString())
             findViewById<TextView>(R.id.statusText).text = "Opened WarPair link → ${p.host}:${p.port}"
         } catch (t: Throwable) {
             findViewById<TextView>(R.id.statusText).text = "Bad link: ${t.message}"
@@ -401,7 +483,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun localIpv4List(): String {
-        val ips = mutableListOf<String>()
+        val addresses = mutableListOf<Pair<String, String>>()
         try {
             val en = NetworkInterface.getNetworkInterfaces()
             while (en.hasMoreElements()) {
@@ -409,14 +491,25 @@ class MainActivity : AppCompatActivity() {
                 if (!ni.isUp || ni.isLoopback) continue
                 val addrs = ni.inetAddresses
                 while (addrs.hasMoreElements()) {
-                    val a = addrs.nextElement()
-                    if (!a.isLoopbackAddress && a.hostAddress?.contains(':') == false) {
-                        ips += "${ni.name}: ${a.hostAddress}"
+                    val address = addrs.nextElement()
+                    val host = address.hostAddress
+                    if (!address.isLoopbackAddress && host?.contains(':') == false) {
+                        addresses += ni.name to host
                     }
                 }
             }
         } catch (_: Exception) {
         }
+        fun priority(name: String): Int {
+            val n = name.lowercase()
+            return when {
+                n.contains("softap") || n.contains("ap") || n.contains("wlan") || n.contains("swlan") -> 0
+                n.contains("eth") -> 1
+                else -> 2
+            }
+        }
+        val ips = addresses.sortedBy { priority(it.first) }
+            .map { "${it.first}: ${it.second}" }
         return if (ips.isEmpty()) "(none)" else ips.joinToString("\n")
     }
 }

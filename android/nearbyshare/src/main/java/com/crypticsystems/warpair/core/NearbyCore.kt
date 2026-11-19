@@ -61,8 +61,14 @@ object NearbyCore {
         ): Int
 
         fun nearby_c_msg_parse_chunk(
-            data: ByteArray, dataLen: Int, seqOut: LongByReference, isLastOut: IntByReference,
+            data: ByteArray, dataLen: Int, sidOut: ByteArray, sidCap: Int, sidLenOut: IntByReference,
+            fileIdOut: IntByReference, seqOut: LongByReference, isLastOut: IntByReference,
             dataOut: ByteArray, dataOutLen: Int,
+        ): Int
+
+        fun nearby_c_msg_parse_complete(
+            data: ByteArray, dataLen: Int, sidOut: ByteArray, sidCap: Int, sidLenOut: IntByReference,
+            fileIdOut: IntByReference, hashOut: ByteArray,
         ): Int
 
         fun nearby_c_hash(data: ByteArray, dataLen: Int, out: ByteArray): Int
@@ -236,13 +242,41 @@ object NearbyCore {
 
     fun parseResponseAccepted(data: ByteArray): Boolean = parseResponse(data).accepted
 
-    data class ChunkInfo(val seq: Long, val isLast: Boolean, val data: ByteArray)
+    data class ChunkInfo(
+        val sessionId: String, val fileId: Int, val seq: Long, val isLast: Boolean, val data: ByteArray,
+    )
 
     fun parseChunk(data: ByteArray): ChunkInfo {
+        val sid = ByteArray(256)
+        val sidLen = IntByReference()
+        val fileId = IntByReference()
         val seq = LongByReference()
         val last = IntByReference()
-        val payload = readBytes { o, l -> lib().nearby_c_msg_parse_chunk(data, data.size, seq, last, o, l) }
-        return ChunkInfo(seq.value, last.value != 0, payload)
+        val payload = readBytes { o, l ->
+            lib().nearby_c_msg_parse_chunk(
+                data, data.size, sid, sid.size, sidLen, fileId, seq, last, o, l,
+            )
+        }
+        return ChunkInfo(
+            String(sid, 0, sidLen.value, StandardCharsets.UTF_8),
+            fileId.value, seq.value, last.value != 0, payload,
+        )
+    }
+
+    data class CompleteInfo(val sessionId: String, val fileId: Int, val checksum: ByteArray)
+
+    fun parseComplete(data: ByteArray): CompleteInfo {
+        val sid = ByteArray(256)
+        val sidLen = IntByReference()
+        val fileId = IntByReference()
+        val checksum = ByteArray(32)
+        val rc = lib().nearby_c_msg_parse_complete(
+            data, data.size, sid, sid.size, sidLen, fileId, checksum,
+        )
+        if (rc != 0) error("parseComplete $rc")
+        return CompleteInfo(
+            String(sid, 0, sidLen.value, StandardCharsets.UTF_8), fileId.value, checksum,
+        )
     }
 
     fun hash(data: ByteArray): ByteArray {

@@ -278,28 +278,65 @@ pub extern "C" fn nearby_c_msg_parse_response(
 pub extern "C" fn nearby_c_msg_parse_chunk(
     data_ptr: *const u8,
     data_len: usize,
+    sid_out: *mut u8,
+    sid_cap: usize,
+    sid_len_out: *mut i32,
+    file_id_out: *mut u32,
     seq_out: *mut u64,
     is_last_out: *mut i32,
     data_out: *mut u8,
     data_out_len: usize,
 ) -> i32 {
-    if data_ptr.is_null() || seq_out.is_null() || is_last_out.is_null() {
+    if data_ptr.is_null() || sid_len_out.is_null() || file_id_out.is_null()
+        || seq_out.is_null() || is_last_out.is_null() {
         return -1;
     }
     let data = unsafe { slice::from_raw_parts(data_ptr, data_len) };
     match Message::decode(data) {
-        Ok(Message::Chunk {
-            seq,
-            data: chunk,
-            is_last,
-            ..
-        }) => {
+        Ok(Message::Chunk { session_id, file_id, seq, data: chunk, is_last }) => {
+            let n = write_bytes(sid_out, sid_cap, session_id.as_bytes());
+            if n < 0 { return n; }
             unsafe {
+                *sid_len_out = n;
+                *file_id_out = file_id;
                 *seq_out = seq;
                 *is_last_out = if is_last { 1 } else { 0 };
             }
             write_bytes(data_out, data_out_len, &chunk)
         }
+        Ok(_) => -5,
+        Err(_) => -4,
+    }
+}
+
+/// Parse a single-file Complete message, including its session, file id and checksum.
+#[no_mangle]
+pub extern "C" fn nearby_c_msg_parse_complete(
+    data_ptr: *const u8,
+    data_len: usize,
+    sid_out: *mut u8,
+    sid_cap: usize,
+    sid_len_out: *mut i32,
+    file_id_out: *mut u32,
+    hash_out: *mut u8,
+) -> i32 {
+    if data_ptr.is_null() || sid_len_out.is_null() || file_id_out.is_null() || hash_out.is_null() {
+        return -1;
+    }
+    let data = unsafe { slice::from_raw_parts(data_ptr, data_len) };
+    match Message::decode(data) {
+        Ok(Message::Complete { session_id, checksums }) if checksums.len() == 1 => {
+            let n = write_bytes(sid_out, sid_cap, session_id.as_bytes());
+            if n < 0 { return n; }
+            let (file_id, hash) = &checksums[0];
+            unsafe {
+                *sid_len_out = n;
+                *file_id_out = *file_id;
+                ptr::copy_nonoverlapping(hash.as_ptr(), hash_out, 32);
+            }
+            0
+        }
+        Ok(Message::Complete { .. }) => -6,
         Ok(_) => -5,
         Err(_) => -4,
     }
@@ -322,4 +359,59 @@ pub extern "C" fn nearby_c_hash(data_ptr: *const u8, data_len: usize, out: *mut 
         ptr::copy_nonoverlapping(h.as_ptr(), out, 32);
     }
     32
+}
+
+
+#[cfg(test)]
+mod transfer_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn chunk_parser_preserves_session_file_and_sequence_metadata() {
+        let message = Message::Chunk {
+            session_id: "session-abc".into(),
+            file_id: 7,
+            seq: 42,
+            data: vec![1, 2, 3],
+            is_last: true,
+        }.encode();
+        let mut sid = [0u8; 64];
+        let mut sid_len = 0;
+        let mut file_id = 0;
+        let mut seq = 0;
+        let mut last = 0;
+        let mut payload = [0u8; 16];
+        let n = nearby_c_msg_parse_chunk(
+            message.as_ptr(), message.len(), sid.as_mut_ptr(), sid.len(),
+            &mut sid_len, &mut file_id, &mut seq, &mut last,
+            payload.as_mut_ptr(), payload.len(),
+        );
+        assert_eq!(n, 3);
+        assert_eq!(&sid[..sid_len as usize], b"session-abc");
+        assert_eq!(file_id, 7);
+        assert_eq!(seq, 42);
+        assert_eq!(last, 1);
+        assert_eq!(&payload[..3], &[1, 2, 3]);
+    }
+
+    #[test]
+    fn complete_parser_returns_session_file_and_checksum() {
+        let expected = [0xA5; 32];
+        let message = Message::Complete {
+            session_id: "session-xyz".into(),
+            checksums: vec![(1, expected)],
+        }.encode();
+        let mut sid = [0u8; 64];
+        let mut sid_len = 0;
+        let mut file_id = 0;
+        let mut hash = [0u8; 32];
+        let rc = nearby_c_msg_parse_complete(
+            message.as_ptr(), message.len(), sid.as_mut_ptr(), sid.len(),
+            &mut sid_len, &mut file_id, hash.as_mut_ptr(),
+        );
+        assert_eq!(rc, 0);
+        assert_eq!(&sid[..sid_len as usize], b"session-xyz");
+        assert_eq!(file_id, 1);
+        assert_eq!(hash, expected);
+    }
 }

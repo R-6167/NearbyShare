@@ -1,151 +1,272 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="?attr/colorSurface"
     android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="24dp">
+        android:padding="20dp">
 
         <TextView
-            android:id="@+id/statusText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="WarPair"
-            android:textIsSelectable="true"
-            android:textSize="15sp" />
+            android:textColor="?attr/colorOnSurface"
+            android:textSize="30sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Private, direct file sharing between nearby devices"
+            android:textColor="?attr/colorOnSurface"
+            android:textSize="14sp" />
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            app:cardCornerRadius="18dp"
+            app:cardElevation="1dp"
+            app:strokeColor="?attr/colorControlHighlight"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Connection status"
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/statusText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Ready. Start Host on one phone, then connect from the other."
+                    android:textColor="?attr/colorOnSurface"
+                    android:textIsSelectable="true"
+                    android:textSize="14sp" />
+
+                <Button
+                    android:id="@+id/cancelButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:enabled="false"
+                    android:text="Cancel current operation" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:text="1. Pair devices"
+            android:textColor="?attr/colorOnSurface"
+            android:textSize="19sp"
+            android:textStyle="bold" />
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            app:cardCornerRadius="18dp"
+            app:cardElevation="1dp"
+            app:strokeColor="?attr/colorControlHighlight"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <EditText
+                    android:id="@+id/nameInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="This device name"
+                    android:inputType="textPersonName"
+                    android:text="WarPair device" />
+
+                <EditText
+                    android:id="@+id/hostInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:hint="Other device IP address"
+                    android:inputType="text" />
+
+                <EditText
+                    android:id="@+id/portInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="TCP port"
+                    android:inputType="number"
+                    android:text="19730" />
+
+                <Button
+                    android:id="@+id/discoverButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Find nearby WarPair devices" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="Nearby devices — tap one to fill its address"
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="13sp" />
+
+                <ListView
+                    android:id="@+id/peersList"
+                    android:layout_width="match_parent"
+                    android:layout_height="112dp"
+                    android:dividerHeight="1dp" />
+
+                <Button
+                    android:id="@+id/softApButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="Create a direct Wi-Fi hotspot" />
+
+                <EditText
+                    android:id="@+id/qrPayloadInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Paste a WarPair QR link here"
+                    android:inputType="textMultiLine"
+                    android:minLines="2" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/showQrButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Show my QR" />
+
+                    <Button
+                        android:id="@+id/scanQrButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Scan QR" />
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/applyQrButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Use pasted QR link" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:text="2. Send or receive"
+            android:textColor="?attr/colorOnSurface"
+            android:textSize="19sp"
+            android:textStyle="bold" />
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            app:cardCornerRadius="18dp"
+            app:cardElevation="1dp"
+            app:strokeColor="?attr/colorControlHighlight"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <Button
+                    android:id="@+id/pickFileButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Choose files to send" />
+
+                <TextView
+                    android:id="@+id/pickedFileText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="No files selected"
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="13sp" />
+
+                <EditText
+                    android:id="@+id/payloadInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:hint="Or send a short text note"
+                    android:inputType="textMultiLine"
+                    android:minLines="2"
+                    android:text="Hello from WarPair" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal">
+
+                    <Button
+                        android:id="@+id/hostButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Host / Receive" />
+
+                    <Button
+                        android:id="@+id/joinButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Connect / Send" />
+                </LinearLayout>
+
+                <Button
+                    android:id="@+id/libraryButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Open received files" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
 
         <Button
             android:id="@+id/smokeButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="Run core smoke test" />
-
-        <Button
-            android:id="@+id/libraryButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Open library" />
-
-        <EditText
-            android:id="@+id/nameInput"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:hint="Device name"
-            android:inputType="textPersonName"
-            android:text="Pixel" />
-
-        <EditText
-            android:id="@+id/hostInput"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="Peer IP (peer list / QR)"
-            android:inputType="text" />
-
-        <Button
-            android:id="@+id/softApButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Start SoftAP (no shared Wi‑Fi)" />
-
-        <EditText
-            android:id="@+id/qrPayloadInput"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="warpair://connect?host=…"
-            android:inputType="textMultiLine"
-            android:minLines="2" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/showQrButton"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Show QR" />
-
-            <Button
-                android:id="@+id/applyQrButton"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Apply QR" />
-        </LinearLayout>
-
-        <Button
-            android:id="@+id/discoverButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Discover peers (mDNS)" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Peers — tap to select:"
-            android:textSize="13sp" />
-
-        <ListView
-            android:id="@+id/peersList"
-            android:layout_width="match_parent"
-            android:layout_height="100dp"
-            android:dividerHeight="1dp" />
-
-        <Button
-            android:id="@+id/pickFileButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Pick file(s) to send" />
-
-        <TextView
-            android:id="@+id/pickedFileText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="No files selected"
-            android:textSize="13sp" />
-
-        <EditText
-            android:id="@+id/payloadInput"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="Fallback text → note.txt"
-            android:inputType="textMultiLine"
-            android:minLines="2"
-            android:text="Hello from WarPair" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/hostButton"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Host" />
-
-            <Button
-                android:id="@+id/joinButton"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Join + send" />
-        </LinearLayout>
-
-        <Button
-            android:id="@+id/cancelButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:enabled="false"
-            android:text="Cancel transfer" />
+            android:layout_marginTop="18dp"
+            android:text="Run connection core self-test" />
     </LinearLayout>
 </ScrollView>
