@@ -22,6 +22,8 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.crypticsystems.warpair.core.NearbyCore
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import java.io.ByteArrayInputStream
 import java.net.NetworkInterface
 import java.util.concurrent.CountDownLatch
@@ -77,6 +79,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val scanQrLauncher = registerForActivityResult(ScanContract()) { result ->
+        val scanned = result.contents
+        if (scanned.isNullOrBlank()) {
+            findViewById<TextView>(R.id.statusText)?.text = "QR scan cancelled."
+        } else {
+            applyScannedQr(scanned)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -96,6 +107,7 @@ class MainActivity : AppCompatActivity() {
         val softApButton = findViewById<Button>(R.id.softApButton)
         val showQrButton = findViewById<Button>(R.id.showQrButton)
         val applyQrButton = findViewById<Button>(R.id.applyQrButton)
+        val scanQrButton = findViewById<Button>(R.id.scanQrButton)
         val qrPayloadInput = findViewById<EditText>(R.id.qrPayloadInput)
         val nameInput = findViewById<EditText>(R.id.nameInput)
         val payloadInput = findViewById<EditText>(R.id.payloadInput)
@@ -166,6 +178,16 @@ class MainActivity : AppCompatActivity() {
             qrPayloadInput.setText(uri)
             val bmp = QrBootstrap.toBitmap(uri, 640)
             showQrDialog(bmp, uri)
+        }
+
+        scanQrButton.setOnClickListener {
+            val options = ScanOptions().apply {
+                setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                setPrompt("Scan the QR code displayed on the other WarPair device")
+                setBeepEnabled(false)
+                setOrientationLocked(false)
+            }
+            scanQrLauncher.launch(options)
         }
 
         applyQrButton.setOnClickListener {
@@ -278,6 +300,25 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleWarpairIntent(intent)
+    }
+
+    private fun applyScannedQr(raw: String) {
+        try {
+            val payload = QrBootstrap.parseUri(raw)
+            findViewById<EditText>(R.id.qrPayloadInput).setText(raw)
+            findViewById<EditText>(R.id.hostInput).setText(payload.host)
+            findViewById<EditText>(R.id.portInput).setText(payload.port.toString())
+            findViewById<TextView>(R.id.statusText).text = buildString {
+                appendLine("WarPair QR scanned successfully.")
+                appendLine("Peer: ${payload.deviceName ?: "WarPair device"}")
+                appendLine("Address: ${payload.host}:${payload.port}")
+                payload.ssid?.let { appendLine("Wi‑Fi: $it — join this network before connecting.") }
+                append("Ready. Choose files if needed, then tap Connect / Send.")
+            }
+        } catch (t: Throwable) {
+            findViewById<TextView>(R.id.statusText).text =
+                "This QR code is not a valid WarPair connection code: ${t.message}"
+        }
     }
 
     private fun handleWarpairIntent(intent: Intent?) {
