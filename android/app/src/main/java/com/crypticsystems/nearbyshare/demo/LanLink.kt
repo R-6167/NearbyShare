@@ -12,17 +12,29 @@ import java.nio.ByteOrder
 import java.util.UUID
 
 /**
- * TCP + session + protocol file transfer with disk streaming on receive
- * and optional InputStream send (no full-file byte[] required).
+ * TCP + session + protocol file transfer with disk streaming on receive.
  */
 object LanLink {
     const val DEFAULT_PORT = 19730
     private const val CHUNK = 64 * 1024
-    /** Soft cap for a single transfer (2 GiB). */
     private const val MAX_BYTES = 2L * 1024 * 1024 * 1024 - 1
 
     fun interface Progress {
         fun onProgress(bytesDone: Long, totalBytes: Long, phase: String)
+    }
+
+    data class OfferRequest(
+        val peerName: String,
+        val pin: String,
+        val sessionId: String,
+        val fileName: String,
+        val size: Long,
+        val category: FileCategory,
+    )
+
+    /** Return true to accept the offer and receive, false to reject. */
+    fun interface OfferDecision {
+        fun decide(offer: OfferRequest): Boolean
     }
 
     fun writeFrame(out: DataOutputStream, payload: ByteArray) {
@@ -44,6 +56,7 @@ object LanLink {
         deviceName: String,
         port: Int = DEFAULT_PORT,
         onProgress: Progress? = null,
+        onOffer: OfferDecision,
         openSink: (fileName: String) -> IncomingFileSink,
     ): String {
         onProgress?.onProgress(0, 0, "listening")
@@ -60,6 +73,7 @@ object LanLink {
                     fileSize = -1,
                     inputStream = null,
                     onProgress = onProgress,
+                    onOffer = onOffer,
                     openSink = openSink,
                 )
             }
@@ -89,6 +103,7 @@ object LanLink {
                 fileSize = fileSize,
                 inputStream = inputStream,
                 onProgress = onProgress,
+                onOffer = null,
                 openSink = null,
             )
         }
@@ -102,6 +117,7 @@ object LanLink {
         fileSize: Long,
         inputStream: InputStream?,
         onProgress: Progress?,
+        onOffer: OfferDecision?,
         openSink: ((String) -> IncomingFileSink)?,
     ): String {
         val input = DataInputStream(socket.getInputStream())
@@ -128,8 +144,8 @@ object LanLink {
                     session, input, output, peer, pin, fileName, fileSize, inputStream, onProgress,
                 )
             }
-            require(openSink != null)
-            return receiveFile(session, input, output, peer, pin, onProgress, openSink)
+            require(onOffer != null && openSink != null)
+            return receiveFile(session, input, output, peer, pin, onProgress, onOffer, openSink)
         }
     }
 
@@ -153,14 +169,20 @@ object LanLink {
         onProgress: Progress?,
     ): String {
         val sessionId = "xfer-${UUID.randomUUID().toString().take(8)}"
-        // If size unknown (-1), we still stream; offer uses 0 and size_match is soft.
         val offerSize = if (fileSize >= 0) fileSize else 0L
-        onProgress?.onProgress(0, offerSize, "offer")
+        onProgress?.onProgress(0, offerSize, "offer — waiting for peer")
         sendSealed(session, output, NearbyCore.encodeOffer(sessionId, fileName, offerSize))
 
         val respPlain = readSealed(session, input)
         require(NearbyCore.msgTag(respPlain) == 3) { "expected Response" }
-        require(NearbyCore.parseResponseAccepted(respPlain)) { "peer rejected offer" }
+        if (!NearbyCore.parseResponseAccepted(respPlain)) {
+            return buildString {
+                appendLine("TRANSFER REJECTED by peer")
+                appendLine("peer=$peer")
+                appendLine("pin=$pin")
+                appendLine("file=$fileName")
+            }
+        }
 
         val hasher = NearbyCore.newHasher()
         val buf = ByteArray(CHUNK)
@@ -173,8 +195,6 @@ object LanLink {
                 if (n == 0) continue
                 val slice = if (n == buf.size) buf else buf.copyOf(n)
                 hasher.update(slice)
-                val last = false // real last after loop
-                // We don't know last until EOF; buffer one chunk lag is complex — send with isLast=false then empty last
                 sendSealed(
                     session,
                     output,
@@ -186,7 +206,6 @@ object LanLink {
                 if (fileSize >= 0 && sent > fileSize) error("sent more than declared size")
             }
         }
-        // Final empty chunk marks end of file (compatible with is_last protocol).
         sendSealed(
             session,
             output,
@@ -215,6 +234,7 @@ object LanLink {
         peer: String,
         pin: String,
         onProgress: Progress?,
+        onOffer: OfferDecision,
         openSink: (String) -> IncomingFileSink,
     ): String {
         val offerPlain = readSealed(session, input)
@@ -224,9 +244,34 @@ object LanLink {
             require(offer.size <= MAX_BYTES) { "Offer too large: ${offer.size}" }
         }
 
-        onProgress?.onProgress(0, offer.size, "accepted ${offer.fileName}")
-        sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, true))
+        val category = ReceivedFiles.categoryFor(offer.fileName)
+        onProgress?.onProgress(0, offer.size, "offer from $peer — waiting for decision")
 
+        val accepted = onOffer.decide(
+            OfferRequest(
+                peerName = peer,
+                pin = pin,
+                sessionId = offer.sessionId,
+                fileName = offer.fileName,
+                size = offer.size,
+                category = category,
+            ),
+        )
+
+        sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, accepted))
+
+        if (!accepted) {
+            onProgress?.onProgress(0, 0, "rejected")
+            return buildString {
+                appendLine("TRANSFER REJECTED (host)")
+                appendLine("peer=$peer")
+                appendLine("pin=$pin")
+                appendLine("file=${offer.fileName}")
+                appendLine("bytes_offered=${offer.size}")
+            }
+        }
+
+        onProgress?.onProgress(0, offer.size, "accepted ${offer.fileName}")
         val sink = openSink(offer.fileName)
         val hasher = NearbyCore.newHasher()
         var chunks = 0
@@ -241,10 +286,11 @@ object LanLink {
                             hasher.update(chunk.data)
                         }
                         chunks++
-                        onProgress?.onProgress(sink.bytesWritten, offer.size, "receiving → ${sink.category.folderName}")
-                        if (chunk.isLast) {
-                            // still expect Complete, keep reading
-                        }
+                        onProgress?.onProgress(
+                            sink.bytesWritten,
+                            offer.size,
+                            "receiving → ${sink.category.folderName}",
+                        )
                     }
                     7 -> break
                     else -> error("unexpected tag ${NearbyCore.msgTag(plain)}")
