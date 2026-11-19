@@ -141,6 +141,39 @@
                     android:dividerHeight="1dp" />
 
                 <Button
+                    android:id="@+id/wifiDirectDiscoverButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Find Wi-Fi Direct devices" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Wi-Fi Direct peers — tap one to select"
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="13sp" />
+
+                <ListView
+                    android:id="@+id/wifiDirectPeersList"
+                    android:layout_width="match_parent"
+                    android:layout_height="100dp"
+                    android:dividerHeight="1dp" />
+
+                <Button
+                    android:id="@+id/wifiDirectHostButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Host over Wi-Fi Direct" />
+
+                <Button
+                    android:id="@+id/wifiDirectJoinButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Connect to selected Wi-Fi Direct peer" />
+
+                <Button
                     android:id="@+id/softApButton"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
