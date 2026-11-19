@@ -1,0 +1,3 @@
+-keep class com.sun.jna.** { *; }
+-keep class * implements com.sun.jna.Library { *; }
+-keep class com.crypticsystems.nearbyshare.** { *; }
