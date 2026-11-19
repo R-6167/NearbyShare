@@ -3,7 +3,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APK="${1:-$ROOT/android/app/build/outputs/apk/debug/app-debug.apk}"
+DEBUG_DIR="$ROOT/android/app/build/outputs/apk/debug"
+if [[ -n "${1:-}" ]]; then
+  APK="$1"
+elif [[ -f "$DEBUG_DIR/WarPair-debug.apk" ]]; then
+  APK="$DEBUG_DIR/WarPair-debug.apk"
+else
+  APK="$DEBUG_DIR/app-debug.apk"
+fi
 
 if [[ ! -f "$APK" ]]; then
   echo "APK not found: $APK"
@@ -29,4 +36,4 @@ echo "Devices:"
 adb devices
 echo "Installing $APK"
 adb install -r "$APK"
-echo "Done. Launch: NearbyShare Demo"
+echo "Done. Launch: WarPair (com.crypticsystems.warpair)"
