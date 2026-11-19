@@ -94,6 +94,10 @@ jobs:
           chmod +x scripts/bootstrap-gradle-wrapper.sh
           ./scripts/bootstrap-gradle-wrapper.sh
 
+      - name: Run Android unit tests
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
+
       - name: Assemble debug APK
         working-directory: android
         run: ./gradlew :app:assembleDebug --stacktrace
