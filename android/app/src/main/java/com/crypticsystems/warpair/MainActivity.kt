@@ -220,7 +220,7 @@ class MainActivity : AppCompatActivity() {
                         onListening = { boundPort ->
                             mainHandler.post {
                                 nsd.advertise(name, boundPort)
-                                status.text = "Waiting for a peer on port $boundPort\\n\\nThis phone's addresses:\\n${localIpv4List()}\\n\\nBoth phones must use the same Wi‑Fi network."
+                                status.text = "Waiting for a peer on port $boundPort\n\nThis phone's addresses:\n${localIpv4List()}\n\nBoth phones must use the same Wi‑Fi network."
                             }
                         },
                         onPinConfirm = LanLink.PinConfirm { peer, pin -> askPinConfirm(peer, pin) },
