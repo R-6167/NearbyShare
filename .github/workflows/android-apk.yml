@@ -10,7 +10,6 @@ on:
 env:
   ANDROID_HOME: ${{ github.workspace }}/android-sdk
   ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
-  # Pin NDK for cargo-ndk
   NDK_VERSION: "27.2.12479018"
   CMDLINE_TOOLS_VERSION: "11076708"
 
@@ -43,7 +42,6 @@ jobs:
           curl -fsSL -o cmdline-tools.zip \
             "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip"
           unzip -q cmdline-tools.zip
-          # Expected layout: $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager
           rm -rf "$ANDROID_HOME/cmdline-tools/latest"
           mv cmdline-tools "$ANDROID_HOME/cmdline-tools/latest"
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
@@ -61,12 +59,10 @@ jobs:
             "build-tools;35.0.0" \
             "ndk;${NDK_VERSION}"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
-          ls -la "$ANDROID_HOME/ndk/${NDK_VERSION}" | head
 
       - name: Write local.properties
         run: |
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
-          cat android/local.properties
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -83,16 +79,15 @@ jobs:
         run: |
           set -euo pipefail
           export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/$NDK_VERSION}"
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
           test -d "$ANDROID_NDK_HOME"
           chmod +x scripts/*.sh
           ROOT="$PWD"
+          # Physical module dir (Gradle project :warpair-core)
           JNI_DIR="$ROOT/android/nearbyshare/src/main/jniLibs"
           mkdir -p "$JNI_DIR"
           cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 -o "$JNI_DIR" \
             build -p nearby-share --release
-          echo "jniLibs:"; find "$JNI_DIR" -name "*.so" -type f
+          find "$JNI_DIR" -name "*.so" -type f
 
       - name: Bootstrap Gradle wrapper
         run: |
@@ -103,11 +98,13 @@ jobs:
         working-directory: android
         run: ./gradlew :app:assembleDebug --stacktrace
 
-      - name: Upload APK
+      - name: Upload WarPair APK
         uses: actions/upload-artifact@v4
         with:
-          name: NearbyShare-demo-debug
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: WarPair-debug
+          path: |
+            android/app/build/outputs/apk/debug/WarPair-debug.apk
+            android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
       - name: Upload jniLibs (debug)
