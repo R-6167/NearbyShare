@@ -30,7 +30,6 @@ fn read_str(ptr: *const u8, len: usize) -> Option<String> {
     Some(String::from_utf8_lossy(bytes).into_owned())
 }
 
-/// Encode Offer for a single file.
 #[no_mangle]
 pub extern "C" fn nearby_c_msg_encode_offer(
     session_id_ptr: *const u8,
@@ -61,7 +60,6 @@ pub extern "C" fn nearby_c_msg_encode_offer(
     write_bytes(out, out_len, &msg.encode())
 }
 
-/// Encode Response.
 #[no_mangle]
 pub extern "C" fn nearby_c_msg_encode_response(
     session_id_ptr: *const u8,
@@ -81,7 +79,6 @@ pub extern "C" fn nearby_c_msg_encode_response(
     write_bytes(out, out_len, &msg.encode())
 }
 
-/// Encode Chunk.
 #[no_mangle]
 pub extern "C" fn nearby_c_msg_encode_chunk(
     session_id_ptr: *const u8,
@@ -114,7 +111,6 @@ pub extern "C" fn nearby_c_msg_encode_chunk(
     write_bytes(out, out_len, &msg.encode())
 }
 
-/// Encode Complete with a single BLAKE3 checksum for file_id 1.
 #[no_mangle]
 pub extern "C" fn nearby_c_msg_encode_complete(
     session_id_ptr: *const u8,
@@ -140,7 +136,6 @@ pub extern "C" fn nearby_c_msg_encode_complete(
     write_bytes(out, out_len, &msg.encode())
 }
 
-/// Return message tag (1..8) or negative on error.
 #[no_mangle]
 pub extern "C" fn nearby_c_msg_tag(data_ptr: *const u8, data_len: usize) -> i32 {
     if data_ptr.is_null() || data_len == 0 {
@@ -160,18 +155,20 @@ pub extern "C" fn nearby_c_msg_tag(data_ptr: *const u8, data_len: usize) -> i32 
     }
 }
 
-/// Parse Offer: write file name to `name_out`, size to `size_out`, session id to `sid_out`.
+/// Parse Offer. Writes session id / name bytes and their lengths.
 #[no_mangle]
 pub extern "C" fn nearby_c_msg_parse_offer(
     data_ptr: *const u8,
     data_len: usize,
     sid_out: *mut u8,
-    sid_len: usize,
+    sid_cap: usize,
+    sid_len_out: *mut i32,
     name_out: *mut u8,
-    name_len: usize,
+    name_cap: usize,
+    name_len_out: *mut i32,
     size_out: *mut u64,
 ) -> i32 {
-    if data_ptr.is_null() || size_out.is_null() {
+    if data_ptr.is_null() || size_out.is_null() || sid_len_out.is_null() || name_len_out.is_null() {
         return -1;
     }
     let data = unsafe { slice::from_raw_parts(data_ptr, data_len) };
@@ -191,21 +188,22 @@ pub extern "C" fn nearby_c_msg_parse_offer(
         Some(f) => f,
         None => return -6,
     };
-    let sn = write_bytes(sid_out, sid_len, session_id.as_bytes());
+    let sn = write_bytes(sid_out, sid_cap, session_id.as_bytes());
     if sn < 0 {
         return sn;
     }
-    let nn = write_bytes(name_out, name_len, file.name.as_bytes());
+    let nn = write_bytes(name_out, name_cap, file.name.as_bytes());
     if nn < 0 {
         return nn;
     }
     unsafe {
+        *sid_len_out = sn;
+        *name_len_out = nn;
         *size_out = total_bytes;
     }
     0
 }
 
-/// Parse Response accepted flag into `accepted_out` (0/1).
 #[no_mangle]
 pub extern "C" fn nearby_c_msg_parse_response(
     data_ptr: *const u8,
@@ -228,7 +226,6 @@ pub extern "C" fn nearby_c_msg_parse_response(
     }
 }
 
-/// Parse Chunk: writes payload to `data_out`, sets seq/is_last via out pointers.
 #[no_mangle]
 pub extern "C" fn nearby_c_msg_parse_chunk(
     data_ptr: *const u8,
@@ -260,13 +257,8 @@ pub extern "C" fn nearby_c_msg_parse_chunk(
     }
 }
 
-/// BLAKE3 hash of input into 32-byte `out`.
 #[no_mangle]
-pub extern "C" fn nearby_c_hash(
-    data_ptr: *const u8,
-    data_len: usize,
-    out: *mut u8,
-) -> i32 {
+pub extern "C" fn nearby_c_hash(data_ptr: *const u8, data_len: usize, out: *mut u8) -> i32 {
     if out.is_null() {
         return -1;
     }
