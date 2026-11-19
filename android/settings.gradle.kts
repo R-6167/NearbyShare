@@ -14,7 +14,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "NearbyShare"
+rootProject.name = "WarPair"
 
 include(":nearbyshare")
 include(":app")
