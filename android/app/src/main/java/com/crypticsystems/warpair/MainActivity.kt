@@ -36,6 +36,9 @@ class MainActivity : AppCompatActivity() {
     private var lastPeers: List<NsdNearby.Peer> = emptyList()
     private lateinit var nsd: NsdNearby
     private var softAp: SoftApLink? = null
+    private var wifiDirect: WifiDirectLink? = null
+    private var wifiDirectPeers: List<WifiDirectLink.Peer> = emptyList()
+    private var selectedWifiDirectPeer: WifiDirectLink.Peer? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private val activeControl = AtomicReference<LanLink.TransferControl?>(null)
 
@@ -79,6 +82,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val requestWifiDirectLocation = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        findViewById<TextView>(R.id.statusText)?.text = if (granted) "Location permission granted. Tap Find Wi-Fi Direct devices again." else "Wi-Fi Direct discovery requires Location permission on this Android version."
+    }
+
     private val scanQrLauncher = registerForActivityResult(ScanContract()) { result ->
         val scanned = result.contents
         if (scanned.isNullOrBlank()) {
@@ -105,12 +112,33 @@ class MainActivity : AppCompatActivity() {
         val libraryButton = findViewById<Button>(R.id.libraryButton)
         val cancelButton = findViewById<Button>(R.id.cancelButton)
         val softApButton = findViewById<Button>(R.id.softApButton)
+        val wifiDirectDiscoverButton = findViewById<Button>(R.id.wifiDirectDiscoverButton)
+        val wifiDirectHostButton = findViewById<Button>(R.id.wifiDirectHostButton)
+        val wifiDirectJoinButton = findViewById<Button>(R.id.wifiDirectJoinButton)
+        val wifiDirectPeersList = findViewById<ListView>(R.id.wifiDirectPeersList)
         val showQrButton = findViewById<Button>(R.id.showQrButton)
         val applyQrButton = findViewById<Button>(R.id.applyQrButton)
         val scanQrButton = findViewById<Button>(R.id.scanQrButton)
         val qrPayloadInput = findViewById<EditText>(R.id.qrPayloadInput)
         val nameInput = findViewById<EditText>(R.id.nameInput)
         val payloadInput = findViewById<EditText>(R.id.payloadInput)
+
+        wifiDirect = WifiDirectLink(this).also { adapter ->
+            adapter.setListener(object : WifiDirectLink.Listener {
+                override fun onPeersChanged(peers: List<WifiDirectLink.Peer>) {
+                    wifiDirectPeers = peers
+                    wifiDirectPeersList.adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_list_item_1,
+                        if (peers.isEmpty()) listOf("(No Wi-Fi Direct peers found yet)")
+                        else peers.map { "${it.name.ifBlank { "WarPair device" }}  ${it.address}" })
+                    if (selectedWifiDirectPeer != null && peers.none { it.address == selectedWifiDirectPeer?.address }) selectedWifiDirectPeer = null
+                }
+                override fun onStatus(message: String) { mainHandler.post { status.text = message } }
+            })
+        }
+        wifiDirectPeersList.setOnItemClickListener { _, _, position, _ ->
+            selectedWifiDirectPeer = wifiDirectPeers.getOrNull(position)
+            selectedWifiDirectPeer?.let { status.text = "Selected Wi-Fi Direct peer: ${it.name} (${it.address})" }
+        }
 
         nsd = NsdNearby(this)
         nsd.onStatus = { message -> status.text = message }
@@ -215,7 +243,42 @@ class MainActivity : AppCompatActivity() {
         pickFileButton.setOnClickListener { openDocuments.launch(arrayOf("*/*")) }
         discoverButton.setOnClickListener {
             nsd.startDiscovery()
-            status.text = "Discovering WarPair peers…"
+            status.text = "Discovering WarPair peers on this Wi-Fi network…"
+        }
+
+        wifiDirectDiscoverButton.setOnClickListener {
+            if (!ensureWifiDirectPermission()) return@setOnClickListener
+            wifiDirect?.discoverPeers()
+            status.text = "Searching for nearby Wi-Fi Direct devices… Keep Wi-Fi enabled on both phones."
+        }
+
+        wifiDirectHostButton.setOnClickListener {
+            if (!ensureWifiDirectPermission()) return@setOnClickListener
+            if (!ReceivedFiles.hasWritableLibrary()) { status.text = "Grant storage access before receiving files."; ensureStorageAccess(); return@setOnClickListener }
+            val adapter = wifiDirect ?: run { status.text = "Wi-Fi Direct is unavailable on this device."; return@setOnClickListener }
+            val name = nameInput.text?.toString()?.ifBlank { "WarPair host" } ?: "WarPair host"
+            val control = LanLink.TransferControl()
+            runBg(listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton, softApButton, wifiDirectDiscoverButton, wifiDirectHostButton, wifiDirectJoinButton), cancelButton, status, control) {
+                WifiDirectTransferController.host(adapter, name, control, progressTo(status),
+                    LanLink.PinConfirm { peerName, pin -> askPinConfirm(peerName, pin) },
+                    LanLink.OfferDecision { offer -> askAcceptOffer(offer) },
+                    statusCallback = { message -> mainHandler.post { status.text = message } })
+            }
+        }
+
+        wifiDirectJoinButton.setOnClickListener {
+            if (!ensureWifiDirectPermission()) return@setOnClickListener
+            val peer = selectedWifiDirectPeer
+            if (peer == null) { status.text = "Find Wi-Fi Direct devices, then select the other phone."; return@setOnClickListener }
+            val adapter = wifiDirect ?: run { status.text = "Wi-Fi Direct is unavailable on this device."; return@setOnClickListener }
+            val name = nameInput.text?.toString()?.ifBlank { "WarPair sender" } ?: "WarPair sender"
+            val files = buildOutgoingFiles(payloadInput.text?.toString().orEmpty())
+            val control = LanLink.TransferControl()
+            runBg(listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton, softApButton, wifiDirectDiscoverButton, wifiDirectHostButton, wifiDirectJoinButton), cancelButton, status, control) {
+                WifiDirectTransferController.join(adapter, peer.address, name, files, control, progressTo(status),
+                    LanLink.PinConfirm { peerName, pin -> askPinConfirm(peerName, pin) },
+                    statusCallback = { message -> mainHandler.post { status.text = message } })
+            }
         }
 
         smokeButton.setOnClickListener {
@@ -403,9 +466,30 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         activeControl.get()?.cancel()
+        wifiDirect?.close()
+        wifiDirect = null
         softAp?.stop()
         nsd.shutdown()
         super.onDestroy()
+    }
+
+    private fun ensureWifiDirectPermission(): Boolean {
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED) {
+                requestNearbyWifiPermission.launch(Manifest.permission.NEARBY_WIFI_DEVICES); return false
+            }
+        } else if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            requestWifiDirectLocation.launch(Manifest.permission.ACCESS_FINE_LOCATION); return false
+        }
+        return true
+    }
+
+    private fun buildOutgoingFiles(note: String): List<LanLink.OutgoingFile> {
+        if (pickedFiles.isNotEmpty()) return pickedFiles.map { picked ->
+            LanLink.OutgoingFile(picked.displayName, picked.size) { ReceivedFiles.openPickedStream(this@MainActivity, picked.uri) }
+        }
+        val bytes = note.toByteArray(Charsets.UTF_8)
+        return listOf(LanLink.OutgoingFile("note.txt", bytes.size.toLong()) { ByteArrayInputStream(bytes) })
     }
 
     private fun ensureStorageAccess() {
