@@ -23,11 +23,13 @@ import java.net.NetworkInterface
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 class MainActivity : AppCompatActivity() {
     private var pickedFiles: List<PickedFile> = emptyList()
     private lateinit var nsd: NsdNearby
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val activeControl = AtomicReference<LanLink.TransferControl?>(null)
 
     private val openDocuments = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
@@ -99,9 +101,16 @@ class MainActivity : AppCompatActivity() {
         val pickFileButton = findViewById<Button>(R.id.pickFileButton)
         val discoverButton = findViewById<Button>(R.id.discoverButton)
         val libraryButton = findViewById<Button>(R.id.libraryButton)
+        val cancelButton = findViewById<Button>(R.id.cancelButton)
         val nameInput = findViewById<EditText>(R.id.nameInput)
         val hostInput = findViewById<EditText>(R.id.hostInput)
         val payloadInput = findViewById<EditText>(R.id.payloadInput)
+
+        cancelButton.isEnabled = false
+        cancelButton.setOnClickListener {
+            activeControl.get()?.cancel()
+            status.text = "Cancel requested…"
+        }
 
         ensureStorageAccess()
         refreshLibraryStatus()
@@ -120,7 +129,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         smokeButton.setOnClickListener {
-            runBg(listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton), status) {
+            runBg(
+                listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton),
+                cancelButton,
+                status,
+            ) {
                 val report = NearbyCore.smokeTest()
                 if (report.startsWith("OK")) "Smoke passed\n\n$report" else "Smoke failed\n\n$report"
             }
@@ -137,11 +150,19 @@ class MainActivity : AppCompatActivity() {
             }
             val name = nameInput.text?.toString()?.ifBlank { "Host" } ?: "Host"
             nsd.advertise(name, LanLink.DEFAULT_PORT)
-            runBg(listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton), status) {
+            val control = LanLink.TransferControl()
+            runBg(
+                listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton),
+                cancelButton,
+                status,
+                control,
+            ) {
                 try {
                     LanLink.hostOnce(
                         deviceName = name,
+                        control = control,
                         onProgress = progressTo(status),
+                        onPinConfirm = LanLink.PinConfirm { peer, pin -> askPinConfirm(peer, pin) },
                         onOffer = LanLink.OfferDecision { offer -> askAcceptOffer(offer) },
                         openSink = { fileName -> ReceivedFiles.openIncoming(fileName) },
                     )
@@ -181,16 +202,55 @@ class MainActivity : AppCompatActivity() {
                 )
             }
 
-            runBg(listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton), status) {
+            val control = LanLink.TransferControl()
+            runBg(
+                listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton),
+                cancelButton,
+                status,
+                control,
+            ) {
                 LanLink.connectOnce(
                     host = host,
                     port = peerPort,
                     deviceName = name,
                     files = files,
+                    control = control,
                     onProgress = progressTo(status),
+                    onPinConfirm = LanLink.PinConfirm { peer, pin -> askPinConfirm(peer, pin) },
                 )
             }
         }
+    }
+
+    /** Both phones must confirm the same PIN before any offers. */
+    private fun askPinConfirm(peerName: String, pin: String): Boolean {
+        val latch = CountDownLatch(1)
+        val ok = AtomicBoolean(false)
+        mainHandler.post {
+            if (isFinishing) {
+                latch.countDown()
+                return@post
+            }
+            AlertDialog.Builder(this)
+                .setTitle("Confirm PIN")
+                .setMessage(
+                    "Connected to: $peerName\n\n" +
+                        "Security code:\n\n    $pin\n\n" +
+                        "Check that the other phone shows the same code, then continue.",
+                )
+                .setCancelable(false)
+                .setPositiveButton("Codes match") { _, _ ->
+                    ok.set(true)
+                    latch.countDown()
+                }
+                .setNegativeButton("Abort") { _, _ ->
+                    ok.set(false)
+                    latch.countDown()
+                }
+                .show()
+        }
+        val finished = latch.await(120, TimeUnit.SECONDS)
+        return finished && ok.get()
     }
 
     private fun askAcceptOffer(offer: LanLink.OfferRequest): Boolean {
@@ -226,8 +286,8 @@ class MainActivity : AppCompatActivity() {
                 .show()
         }
 
-        val ok = latch.await(120, TimeUnit.SECONDS)
-        return ok && accepted.get()
+        val finished = latch.await(120, TimeUnit.SECONDS)
+        return finished && accepted.get()
     }
 
     private fun formatSize(bytes: Long): String {
@@ -247,6 +307,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        activeControl.get()?.cancel()
         nsd.shutdown()
         super.onDestroy()
     }
@@ -316,18 +377,32 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun runBg(buttons: List<Button>, status: TextView, block: () -> String) {
+    private fun runBg(
+        buttons: List<Button>,
+        cancelButton: Button,
+        status: TextView,
+        control: LanLink.TransferControl? = null,
+        block: () -> String,
+    ) {
         buttons.forEach { it.isEnabled = false }
+        cancelButton.isEnabled = control != null
+        activeControl.set(control)
         status.text = "Working…"
         Thread {
             val result = try {
                 block()
             } catch (t: Throwable) {
-                "Error: ${t.javaClass.simpleName}: ${t.message}\n\n${t.stackTraceToString().take(1500)}"
+                if (t is LanLink.TransferCancelledException || t.message?.contains("cancelled") == true) {
+                    "Cancelled."
+                } else {
+                    "Error: ${t.javaClass.simpleName}: ${t.message}\n\n${t.stackTraceToString().take(1500)}"
+                }
             }
             runOnUiThread {
                 status.text = result
                 buttons.forEach { it.isEnabled = true }
+                cancelButton.isEnabled = false
+                activeControl.set(null)
             }
         }.start()
     }
