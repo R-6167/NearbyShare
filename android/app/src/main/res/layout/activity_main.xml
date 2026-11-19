@@ -14,7 +14,7 @@
             android:id="@+id/statusText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="NearbyShare demo"
+            android:text="WarPair"
             android:textIsSelectable="true"
             android:textSize="15sp" />
 
@@ -35,7 +35,7 @@
             android:id="@+id/nameInput"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
+            android:layout_marginTop="16dp"
             android:hint="Device name"
             android:inputType="textPersonName"
             android:text="Pixel" />
@@ -44,8 +44,42 @@
             android:id="@+id/hostInput"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="Peer IP (or tap a peer below)"
+            android:hint="Peer IP (peer list / QR)"
             android:inputType="text" />
+
+        <Button
+            android:id="@+id/softApButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Start SoftAP (no shared Wi‑Fi)" />
+
+        <EditText
+            android:id="@+id/qrPayloadInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="warpair://connect?host=…"
+            android:inputType="textMultiLine"
+            android:minLines="2" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/showQrButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Show QR" />
+
+            <Button
+                android:id="@+id/applyQrButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Apply QR" />
+        </LinearLayout>
 
         <Button
             android:id="@+id/discoverButton"
@@ -62,7 +96,7 @@
         <ListView
             android:id="@+id/peersList"
             android:layout_width="match_parent"
-            android:layout_height="120dp"
+            android:layout_height="100dp"
             android:dividerHeight="1dp" />
 
         <Button
@@ -75,17 +109,17 @@
             android:id="@+id/pickedFileText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="No files selected (Join will send the text below as note.txt)"
+            android:text="No files selected"
             android:textSize="13sp" />
 
         <EditText
             android:id="@+id/payloadInput"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="Fallback text → note.txt if no files picked"
+            android:hint="Fallback text → note.txt"
             android:inputType="textMultiLine"
             android:minLines="2"
-            android:text="Hello from NearbyShare" />
+            android:text="Hello from WarPair" />
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -97,7 +131,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Host (receive)" />
+                android:text="Host" />
 
             <Button
                 android:id="@+id/joinButton"
@@ -113,12 +147,5 @@
             android:layout_height="wrap_content"
             android:enabled="false"
             android:text="Cancel transfer" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:text="Tap a peer to select. Cancel keeps partials so the next send can Resume."
-            android:textSize="13sp" />
     </LinearLayout>
 </ScrollView>
