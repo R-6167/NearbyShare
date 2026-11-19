@@ -4,7 +4,7 @@
 //! - Session AEAD: ChaCha20-Poly1305
 //! - Integrity: BLAKE3
 //! - Key derivation: HKDF-SHA256
-//! - PIN: derived from session root for Nearby Share–style UX
+//! - PIN: derived from session root for WarPair UX
 
 use std::fmt;
 
@@ -92,7 +92,6 @@ impl DeviceIdentity {
 /// Derive a short fingerprint from a public key using BLAKE3.
 fn fingerprint_from_public(pk: &PublicKey) -> Fingerprint {
     let hash = Blake3::new().update(pk).finalize();
-    // First 8 bytes as hex → 16 character fingerprint
     hash.as_bytes()[..8]
         .iter()
         .map(|b| format!("{:02x}", b))
@@ -128,11 +127,6 @@ impl fmt::Debug for SessionSecrets {
 }
 
 /// Perform X25519 key exchange + HKDF to produce directional session keys.
-///
-/// The `info` parameter should be a protocol-specific label (e.g. b"NearbyShare-v1").
-/// Keys are derived so that both sides compute matching send/recv keys when they
-/// swap roles correctly (we use the lexicographic order of public keys to decide
-/// which direction is "initiator").
 pub fn perform_key_exchange(
     local: &DeviceIdentity,
     peer_public: &PublicKey,
@@ -141,18 +135,16 @@ pub fn perform_key_exchange(
     let peer_pub = X25519Public::from(*peer_public);
     let shared = local_secret.diffie_hellman(&peer_pub);
 
-    // HKDF-SHA256 extract + expand
     let hk = Hkdf::<Sha256>::new(None, shared.as_bytes());
 
     let mut root = [0u8; 32];
-    hk.expand(b"NearbyShare-v1-root", &mut root)
+    hk.expand(b"WarPair-v1-root", &mut root)
         .expect("hkdf expand root");
 
-    // Directional keys: sort public keys so both sides agree on "low" vs "high"
     let (send_label, recv_label) = if local.public_key < *peer_public {
-        (b"NearbyShare-v1-send-low".as_slice(), b"NearbyShare-v1-send-high".as_slice())
+        (b"WarPair-v1-send-low".as_slice(), b"WarPair-v1-send-high".as_slice())
     } else {
-        (b"NearbyShare-v1-send-high".as_slice(), b"NearbyShare-v1-send-low".as_slice())
+        (b"WarPair-v1-send-high".as_slice(), b"WarPair-v1-send-low".as_slice())
     };
 
     let mut send_key = [0u8; 32];
@@ -167,11 +159,11 @@ pub fn perform_key_exchange(
     }
 }
 
-/// Derive a 4-digit PIN from the session root (Nearby Share style UX).
+/// Derive a 4-digit PIN from the session root.
 pub fn derive_pin(secrets: &SessionSecrets) -> String {
     let mut out = [0u8; 4];
     let hk = Hkdf::<Sha256>::new(None, &secrets.root);
-    hk.expand(b"NearbyShare-v1-pin", &mut out)
+    hk.expand(b"WarPair-v1-pin", &mut out)
         .expect("hkdf expand pin");
     let value = u32::from_be_bytes(out) % 10_000;
     format!("{:04}", value)
@@ -253,7 +245,7 @@ mod tests {
     fn identity_generation_produces_valid_keys() {
         let id = DeviceIdentity::generate_ephemeral("Pixel");
         assert_eq!(id.name, "Pixel");
-        assert_eq!(id.fingerprint().len(), 16); // 8 bytes hex
+        assert_eq!(id.fingerprint().len(), 16);
         assert_ne!(id.public_key, [0u8; 32]);
     }
 
@@ -273,10 +265,7 @@ mod tests {
         let secrets_a = perform_key_exchange(&alice, bob.public_key());
         let secrets_b = perform_key_exchange(&bob, alice.public_key());
 
-        // Root must match
         assert_eq!(secrets_a.root, secrets_b.root);
-
-        // Send/recv are swapped from each side's perspective
         assert_eq!(secrets_a.send_key, secrets_b.recv_key);
         assert_eq!(secrets_a.recv_key, secrets_b.send_key);
     }
@@ -297,7 +286,7 @@ mod tests {
     #[test]
     fn encrypt_decrypt_roundtrip() {
         let key = [0x42u8; 32];
-        let plaintext = b"hello nearby share";
+        let plaintext = b"hello warpair";
 
         let sealed = encrypt(&key, plaintext).expect("encrypt");
         let opened = decrypt(&key, &sealed).expect("decrypt");
@@ -308,7 +297,6 @@ mod tests {
     fn decrypt_fails_on_tamper() {
         let key = [0x42u8; 32];
         let mut sealed = encrypt(&key, b"secret").expect("encrypt");
-        // Flip a bit in the ciphertext
         if let Some(b) = sealed.last_mut() {
             *b ^= 0xff;
         }
