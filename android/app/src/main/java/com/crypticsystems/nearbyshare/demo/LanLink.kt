@@ -12,20 +12,41 @@ import java.net.SocketTimeoutException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * TCP + session + protocol file transfer.
  *
- * After one handshake, sender may push one or more files (Offer → Response → Chunks → Complete).
- * Receiver loops until the peer closes the connection.
+ * After handshake both sides can require PIN confirmation. Transfers honor [TransferControl]
+ * for mid-transfer cancel (sends protocol Cancel when possible).
  */
 object LanLink {
     const val DEFAULT_PORT = 19730
     private const val CHUNK = 64 * 1024
     private const val MAX_BYTES = 2L * 1024 * 1024 * 1024 - 1
 
+    class TransferControl {
+        private val cancelled = AtomicBoolean(false)
+        fun cancel() {
+            cancelled.set(true)
+        }
+
+        fun isCancelled(): Boolean = cancelled.get()
+
+        fun check() {
+            if (cancelled.get()) throw TransferCancelledException()
+        }
+    }
+
+    class TransferCancelledException : RuntimeException("transfer cancelled")
+
     fun interface Progress {
         fun onProgress(bytesDone: Long, totalBytes: Long, phase: String)
+    }
+
+    /** Confirm matching PIN on both devices before any file offers. */
+    fun interface PinConfirm {
+        fun confirm(peerName: String, pin: String): Boolean
     }
 
     data class OutgoingFile(
@@ -67,7 +88,9 @@ object LanLink {
     fun hostOnce(
         deviceName: String,
         port: Int = DEFAULT_PORT,
+        control: TransferControl = TransferControl(),
         onProgress: Progress? = null,
+        onPinConfirm: PinConfirm,
         onOffer: OfferDecision,
         openSink: (fileName: String) -> IncomingFileSink,
     ): String {
@@ -77,7 +100,7 @@ object LanLink {
             val socket = server.accept()
             socket.soTimeout = 180_000
             return socket.use {
-                runHost(it, deviceName, onProgress, onOffer, openSink)
+                runHost(it, deviceName, control, onProgress, onPinConfirm, onOffer, openSink)
             }
         }
     }
@@ -87,7 +110,9 @@ object LanLink {
         port: Int,
         deviceName: String,
         files: List<OutgoingFile>,
+        control: TransferControl = TransferControl(),
         onProgress: Progress? = null,
+        onPinConfirm: PinConfirm,
     ): String {
         require(files.isNotEmpty()) { "no files to send" }
         for (f in files) {
@@ -98,14 +123,16 @@ object LanLink {
         socket.soTimeout = 180_000
         socket.connect(InetSocketAddress(host, port), 20_000)
         return socket.use {
-            runClient(it, deviceName, files, onProgress)
+            runClient(it, deviceName, files, control, onProgress, onPinConfirm)
         }
     }
 
     private fun runHost(
         socket: Socket,
         deviceName: String,
+        control: TransferControl,
         onProgress: Progress?,
+        onPinConfirm: PinConfirm,
         onOffer: OfferDecision,
         openSink: (String) -> IncomingFileSink,
     ): String {
@@ -119,11 +146,17 @@ object LanLink {
 
             val pin = session.pin()
             val peer = session.peerName()
-            onProgress?.onProgress(0, 0, "established pin=$pin")
+            onProgress?.onProgress(0, 0, "PIN $pin — confirm with peer")
+
+            if (!onPinConfirm.confirm(peer, pin)) {
+                return "PIN not confirmed (host). peer=$peer pin=$pin"
+            }
+            control.check()
 
             val reports = mutableListOf<String>()
             var index = 0
             while (true) {
+                control.check()
                 val offerPlain = try {
                     readSealed(session, input)
                 } catch (_: EOFException) {
@@ -134,12 +167,15 @@ object LanLink {
                     if (reports.isNotEmpty()) break
                     throw t
                 }
-                if (NearbyCore.msgTag(offerPlain) != 2) {
-                    error("expected Offer, got tag ${NearbyCore.msgTag(offerPlain)}")
+                when (NearbyCore.msgTag(offerPlain)) {
+                    8 -> return "Peer cancelled. peer=$peer pin=$pin"
+                    2 -> { /* offer */ }
+                    else -> error("expected Offer, got tag ${NearbyCore.msgTag(offerPlain)}")
                 }
                 index++
                 reports += receiveOne(
-                    session, input, output, peer, pin, offerPlain, index, onProgress, onOffer, openSink,
+                    session, input, output, peer, pin, offerPlain, index,
+                    control, onProgress, onOffer, openSink,
                 )
             }
 
@@ -162,7 +198,9 @@ object LanLink {
         socket: Socket,
         deviceName: String,
         files: List<OutgoingFile>,
+        control: TransferControl,
         onProgress: Progress?,
+        onPinConfirm: PinConfirm,
     ): String {
         val input = DataInputStream(socket.getInputStream())
         val output = DataOutputStream(socket.getOutputStream())
@@ -174,12 +212,19 @@ object LanLink {
 
             val pin = session.pin()
             val peer = session.peerName()
-            onProgress?.onProgress(0, 0, "established pin=$pin")
+            onProgress?.onProgress(0, 0, "PIN $pin — confirm with peer")
+
+            if (!onPinConfirm.confirm(peer, pin)) {
+                return "PIN not confirmed (sender). peer=$peer pin=$pin"
+            }
+            control.check()
 
             val reports = mutableListOf<String>()
             files.forEachIndexed { i, file ->
+                control.check()
                 reports += sendOne(
-                    session, input, output, peer, pin, file, i + 1, files.size, onProgress,
+                    session, input, output, peer, pin, file, i + 1, files.size,
+                    control, onProgress,
                 )
             }
 
@@ -203,6 +248,18 @@ object LanLink {
         return session.open(readFrame(input))
     }
 
+    private fun trySendCancel(
+        session: NearbyCore.Session,
+        output: DataOutputStream,
+        sessionId: String,
+        reason: String,
+    ) {
+        try {
+            sendSealed(session, output, NearbyCore.encodeCancel(sessionId, reason))
+        } catch (_: Throwable) {
+        }
+    }
+
     private fun sendOne(
         session: NearbyCore.Session,
         input: DataInputStream,
@@ -212,6 +269,7 @@ object LanLink {
         file: OutgoingFile,
         index: Int,
         total: Int,
+        control: TransferControl,
         onProgress: Progress?,
     ): String {
         val sessionId = "xfer-${UUID.randomUUID().toString().take(8)}"
@@ -220,6 +278,9 @@ object LanLink {
         sendSealed(session, output, NearbyCore.encodeOffer(sessionId, file.fileName, offerSize))
 
         val respPlain = readSealed(session, input)
+        if (NearbyCore.msgTag(respPlain) == 8) {
+            return "CANCELLED by peer (${file.fileName})"
+        }
         require(NearbyCore.msgTag(respPlain) == 3) { "expected Response" }
         if (!NearbyCore.parseResponseAccepted(respPlain)) {
             return "REJECTED ${file.fileName}"
@@ -229,35 +290,40 @@ object LanLink {
         val buf = ByteArray(CHUNK)
         var sent = 0L
         var seq = 0L
-        file.openStream().use { src ->
-            while (true) {
-                val n = src.read(buf)
-                if (n < 0) break
-                if (n == 0) continue
-                val slice = if (n == buf.size) buf else buf.copyOf(n)
-                hasher.update(slice)
-                sendSealed(
-                    session,
-                    output,
-                    NearbyCore.encodeChunk(sessionId, 1, seq, slice, false),
-                )
-                sent += n
-                seq++
-                onProgress?.onProgress(sent, offerSize, "[$index/$total] sending ${file.fileName}")
+        try {
+            file.openStream().use { src ->
+                while (true) {
+                    control.check()
+                    val n = src.read(buf)
+                    if (n < 0) break
+                    if (n == 0) continue
+                    val slice = if (n == buf.size) buf else buf.copyOf(n)
+                    hasher.update(slice)
+                    sendSealed(
+                        session,
+                        output,
+                        NearbyCore.encodeChunk(sessionId, 1, seq, slice, false),
+                    )
+                    sent += n
+                    seq++
+                    onProgress?.onProgress(sent, offerSize, "[$index/$total] sending ${file.fileName}")
+                }
             }
+            control.check()
+            sendSealed(
+                session,
+                output,
+                NearbyCore.encodeChunk(sessionId, 1, seq, ByteArray(0), true),
+            )
+            seq++
+            val hash = hasher.finalizeHash()
+            sendSealed(session, output, NearbyCore.encodeComplete(sessionId, hash))
+            onProgress?.onProgress(sent, offerSize, "[$index/$total] complete ${file.fileName}")
+            return "OK ${file.fileName} bytes=$sent chunks=$seq peer=$peer pin=$pin"
+        } catch (_: TransferCancelledException) {
+            trySendCancel(session, output, sessionId, "user_cancel")
+            return "CANCELLED ${file.fileName} after $sent bytes"
         }
-        sendSealed(
-            session,
-            output,
-            NearbyCore.encodeChunk(sessionId, 1, seq, ByteArray(0), true),
-        )
-        seq++
-
-        val hash = hasher.finalizeHash()
-        sendSealed(session, output, NearbyCore.encodeComplete(sessionId, hash))
-        onProgress?.onProgress(sent, offerSize, "[$index/$total] complete ${file.fileName}")
-
-        return "OK ${file.fileName} bytes=$sent chunks=$seq peer=$peer pin=$pin"
     }
 
     private fun receiveOne(
@@ -268,6 +334,7 @@ object LanLink {
         pin: String,
         offerPlain: ByteArray,
         index: Int,
+        control: TransferControl,
         onProgress: Progress?,
         onOffer: OfferDecision,
         openSink: (String) -> IncomingFileSink,
@@ -291,6 +358,10 @@ object LanLink {
                 totalInBatch = 0,
             ),
         )
+        if (control.isCancelled()) {
+            sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, false))
+            return "CANCELLED before accept ${offer.fileName}"
+        }
         sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, accepted))
 
         if (!accepted) {
@@ -302,6 +373,7 @@ object LanLink {
         var chunks = 0
         try {
             while (true) {
+                control.check()
                 val plain = readSealed(session, input)
                 when (NearbyCore.msgTag(plain)) {
                     5 -> {
@@ -318,6 +390,10 @@ object LanLink {
                         )
                     }
                     7 -> break
+                    8 -> {
+                        sink.abort()
+                        return "CANCELLED by peer (${offer.fileName})"
+                    }
                     else -> error("unexpected tag ${NearbyCore.msgTag(plain)}")
                 }
             }
@@ -331,6 +407,11 @@ object LanLink {
                 appendLine("blake3_prefix=${digest.take(4).joinToString("") { "%02x".format(it) }}")
                 append(save.summary())
             }
+        } catch (t: TransferCancelledException) {
+            hasher.close()
+            trySendCancel(session, output, offer.sessionId, "user_cancel")
+            sink.abort()
+            return "CANCELLED ${offer.fileName}"
         } catch (t: Throwable) {
             hasher.close()
             sink.abort()
