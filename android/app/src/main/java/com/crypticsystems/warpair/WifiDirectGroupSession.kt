@@ -34,9 +34,9 @@ class WifiDirectGroupSession(
         adapter.createGroup { failure ->
             if (failure != null && !closed.get()) {
                 statusCallback("Wi-Fi Direct unavailable for this receive session ($failure). LAN and Bluetooth remain active.")
-            } else if (failure == null && !closed.get()) {
+            } else if (failure == null) {
                 groupCreated = true
-                adapter.requestConnection()
+                if (closed.get()) adapter.removeGroup() else adapter.requestConnection()
             }
         }
     }
