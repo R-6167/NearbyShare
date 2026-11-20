@@ -65,6 +65,13 @@ class BluetoothLink(context: Context) : AutoCloseable {
 
     fun isSupported(): Boolean = adapter != null
 
+    /** Current Android Bluetooth adapter name, used only as a short-lived QR discovery hint. */
+    fun localDeviceName(): String? = try {
+        adapter?.name?.takeIf { it.isNotBlank() }
+    } catch (_: SecurityException) {
+        null
+    }
+
     fun isEnabled(): Boolean {
         ensureSupported()
         return try {
