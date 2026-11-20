@@ -39,9 +39,9 @@ object LanLink {
     data class OutgoingFile(
         val fileName: String,
         val size: Long,
-        val openStream: () -> InputStream,
         /** Stable for this selected file across transport retries within one logical send. */
         val sessionId: String = "xfer-${UUID.randomUUID()}",
+        val openStream: () -> InputStream,
     )
 
     data class OfferRequest(
