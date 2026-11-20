@@ -12,21 +12,42 @@
         android:orientation="vertical"
         android:padding="20dp">
 
-        <TextView
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="WarPair"
-            android:textColor="?attr/colorOnSurface"
-            android:textSize="30sp"
-            android:textStyle="bold" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="Move files. Not through hoops."
-            android:textColor="?attr/colorOnSurface"
-            android:textSize="14sp" />
+            <ImageView
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginEnd="12dp"
+                android:contentDescription="WarPair Orbit"
+                android:src="@drawable/ic_orbit" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="WarPair"
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="28sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="Move files. Not through hoops."
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </LinearLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -45,6 +66,10 @@
                 android:text="Send"
                 android:textAllCaps="false"
                 android:textSize="16sp"
+                app:cornerRadius="18dp"
+                app:backgroundTint="?attr/colorPrimary"
+                android:textColor="?attr/colorOnPrimary"
+                app:iconTint="?attr/colorOnPrimary"
                 app:icon="@drawable/ic_send"
                 app:iconGravity="top"
                 app:iconSize="30dp"
@@ -53,12 +78,18 @@
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/quickReceiveButton"
                 android:layout_width="0dp"
-                android:layout_height="76dp"
+                android:layout_height="108dp"
                 android:layout_weight="1"
                 android:layout_marginStart="6dp"
                 android:text="Receive"
                 android:textAllCaps="false"
                 android:textSize="16sp"
+                app:cornerRadius="18dp"
+                app:backgroundTint="?attr/colorSurface"
+                app:strokeColor="?attr/colorPrimary"
+                app:strokeWidth="1dp"
+                android:textColor="?attr/colorOnSurface"
+                app:iconTint="?attr/colorPrimary"
                 app:icon="@drawable/ic_inbox"
                 app:iconGravity="top"
                 app:iconSize="30dp"
