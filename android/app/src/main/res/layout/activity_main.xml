@@ -39,15 +39,16 @@
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/quickSendButton"
                 android:layout_width="0dp"
-                android:layout_height="76dp"
+                android:layout_height="108dp"
                 android:layout_weight="1"
                 android:layout_marginEnd="6dp"
                 android:text="Send"
                 android:textAllCaps="false"
                 android:textSize="16sp"
                 app:icon="@drawable/ic_send"
-                app:iconGravity="textStart"
-                app:iconPadding="10dp" />
+                app:iconGravity="top"
+                app:iconSize="30dp"
+                app:iconPadding="8dp" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/quickReceiveButton"
@@ -59,22 +60,57 @@
                 android:textAllCaps="false"
                 android:textSize="16sp"
                 app:icon="@drawable/ic_inbox"
-                app:iconGravity="textStart"
-                app:iconPadding="10dp" />
+                app:iconGravity="top"
+                app:iconSize="30dp"
+                app:iconPadding="8dp" />
         </LinearLayout>
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/quickScanButton"
             android:layout_width="match_parent"
-            android:layout_height="52dp"
-            android:layout_marginTop="8dp"
-            android:text="Scan connection QR"
+            android:layout_height="56dp"
+            android:layout_marginTop="10dp"
+            android:text="Scan to connect"
             android:textAllCaps="false"
             app:icon="@drawable/ic_qr_scan"
             app:iconGravity="textStart"
-            app:iconPadding="10dp" />
+            app:iconSize="24dp"
+            app:iconPadding="12dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/quickFilesButton"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:layout_marginEnd="6dp"
+                android:text="Files"
+                android:textAllCaps="false"
+                app:icon="@drawable/ic_folder"
+                app:iconGravity="textStart"
+                app:iconSize="20dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/quickToolsButton"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:layout_marginStart="6dp"
+                android:text="More tools"
+                android:textAllCaps="false"
+                app:icon="@drawable/ic_tune"
+                app:iconGravity="textStart"
+                app:iconSize="20dp" />
+        </LinearLayout>
 
         <com.google.android.material.card.MaterialCardView
+            android:id="@+id/advancedPairingCard"
+            android:visibility="gone"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
@@ -127,6 +163,8 @@
             android:textStyle="bold" />
 
         <com.google.android.material.card.MaterialCardView
+            android:id="@+id/advancedTransferCard"
+            android:visibility="gone"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
@@ -376,6 +414,7 @@
 
         <Button
             android:id="@+id/smokeButton"
+            android:visibility="gone"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
