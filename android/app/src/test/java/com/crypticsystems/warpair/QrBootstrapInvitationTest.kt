@@ -17,6 +17,7 @@ class QrBootstrapInvitationTest {
                 QrBootstrap.Endpoint("192.168.1.13", 19730),
             ),
             bluetoothServiceUuid = "a8c2f4d0-6e5b-4d91-9a3f-575250414952",
+            bluetoothDeviceName = "Moses Phone",
             nowEpochSeconds = now,
         )
 
@@ -32,6 +33,7 @@ class QrBootstrapInvitationTest {
         assertEquals(invitation.routes, decoded.routes)
         assertEquals(invitation.lanEndpoints, decoded.lanEndpoints)
         assertEquals(invitation.bluetoothServiceUuid, decoded.bluetoothServiceUuid)
+        assertEquals(invitation.bluetoothDeviceName, decoded.bluetoothDeviceName)
     }
 
     @Test
