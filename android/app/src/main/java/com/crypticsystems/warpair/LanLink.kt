@@ -300,7 +300,7 @@ object LanLink {
         }
         val reason = if (resume != null) "resume_bytes:${resume.bytesReceived}" else null
         sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, true, reason))
-        val sink = ReceivedFiles.openIncoming(offer.fileName, resume, offer.sessionId)
+        val sink = ReceivedFiles.openIncoming(offer.fileName, resume, offer.sessionId, offer.size)
         val hasher = NearbyCore.newHasher()
         var discardPartialOnFailure = false
         val validator = TransferIntegrityValidator(
