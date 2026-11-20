@@ -88,6 +88,7 @@ class BluetoothLink(context: Context) : AutoCloseable {
     /** Discover nearby devices and merge them with the already-paired list. */
     fun startDiscovery(listener: DiscoveryListener) {
         ensureReady()
+        stopDiscovery()
         discoveryListener = listener
         synchronized(discoveredPeers) {
             discoveredPeers.clear()
