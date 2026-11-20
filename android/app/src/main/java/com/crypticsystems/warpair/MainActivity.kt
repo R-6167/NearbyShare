@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
+import android.view.View
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -172,6 +173,10 @@ class MainActivity : AppCompatActivity() {
         val quickSendButton = findViewById<Button>(R.id.quickSendButton)
         val quickReceiveButton = findViewById<Button>(R.id.quickReceiveButton)
         val quickScanButton = findViewById<Button>(R.id.quickScanButton)
+        val quickFilesButton = findViewById<Button>(R.id.quickFilesButton)
+        val quickToolsButton = findViewById<Button>(R.id.quickToolsButton)
+        val advancedPairingCard = findViewById<View>(R.id.advancedPairingCard)
+        val advancedTransferCard = findViewById<View>(R.id.advancedTransferCard)
 
         // Primary actions stay simple; transport-specific controls remain available
         // below for diagnostics and compatibility while the unified invitation flow is built.
@@ -181,6 +186,14 @@ class MainActivity : AppCompatActivity() {
         }
         quickReceiveButton.setOnClickListener { hostButton.performClick() }
         quickScanButton.setOnClickListener { scanQrButton.performClick() }
+        quickFilesButton.setOnClickListener { libraryButton.performClick() }
+        quickToolsButton.setOnClickListener {
+            val show = advancedPairingCard.visibility != View.VISIBLE
+            advancedPairingCard.visibility = if (show) View.VISIBLE else View.GONE
+            advancedTransferCard.visibility = if (show) View.VISIBLE else View.GONE
+            smokeButton.visibility = if (show) View.VISIBLE else View.GONE
+            quickToolsButton.text = if (show) "Close tools" else "More tools"
+        }
 
         bluetooth = BluetoothLink(this)
         bluetoothPeersList.setOnItemClickListener { _, _, position, _ ->
@@ -1051,6 +1064,7 @@ class MainActivity : AppCompatActivity() {
         buttons.forEach { it.isEnabled = false }
         val primaryActions = listOf(
             R.id.quickSendButton, R.id.quickReceiveButton, R.id.quickScanButton,
+            R.id.quickFilesButton, R.id.quickToolsButton,
         ).mapNotNull { findViewById<Button?>(it) }
         primaryActions.forEach { it.isEnabled = false }
         cancelButton.isEnabled = control != null
