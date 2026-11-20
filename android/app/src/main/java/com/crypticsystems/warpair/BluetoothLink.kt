@@ -2,14 +2,12 @@ package com.crypticsystems.warpair
 
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.os.Build
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -17,9 +15,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Secure Bluetooth Classic RFCOMM transport adapter.
  *
- * It deliberately does not own discovery, pairing UI, transfer identity or file
- * checkpoints. Devices must be paired by Android first; the shared LanLink
- * handshake and resume protocol runs over the returned full-duplex stream.
+ * It owns Bluetooth Classic discovery and secure RFCOMM sockets. Android handles
+ * the system pairing prompt when needed; the shared LanLink handshake and resume
+ * protocol runs over the returned full-duplex stream.
  */
 class BluetoothLink(context: Context) : AutoCloseable {
     data class Peer(val name: String, val address: String, val bonded: Boolean = false)
@@ -166,7 +164,7 @@ class BluetoothLink(context: Context) : AutoCloseable {
         }
     }
 
-    /** Connect to a device already paired in Android Bluetooth settings. */
+    /** Connect to a discovered or already-paired device; Android may prompt for pairing. */
     @Throws(IOException::class)
     fun connect(peerAddress: String): TransferConnection {
         ensureReady()
