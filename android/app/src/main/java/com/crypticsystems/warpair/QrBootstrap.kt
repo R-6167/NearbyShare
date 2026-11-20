@@ -163,7 +163,7 @@ object QrBootstrap {
         return bmp
     }
 
-    fun decodeBitmap(bitmap: Bitmap): String? {
+    fun decodeText(bitmap: Bitmap): String? {
         return try {
             val w = bitmap.width
             val h = bitmap.height
@@ -175,6 +175,13 @@ object QrBootstrap {
         } catch (_: Throwable) {
             null
         }
+    }
+
+    /** Backwards-compatible decoder for the original LAN connect QR format. */
+    fun decodeBitmap(bitmap: Bitmap): Payload? = try {
+        decodeText(bitmap)?.let(::parseUri)
+    } catch (_: Throwable) {
+        null
     }
 
     private fun validateInvitation(invitation: Invitation, now: Long, checkExpiry: Boolean) {
