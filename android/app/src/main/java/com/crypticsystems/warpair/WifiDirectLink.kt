@@ -156,7 +156,7 @@ class WifiDirectLink(context: Context) : AutoCloseable {
     }
 
     /** Create a group when this phone is explicitly selected as the host. */
-    fun createGroup(onFailure: ((String) -> Unit)? = null) {
+    fun createGroup(onGroupFailure: ((String) -> Unit)? = null) {
         ensureOpen()
         try {
             manager.createGroup(channel, object : WifiP2pManager.ActionListener {
@@ -166,7 +166,7 @@ class WifiDirectLink(context: Context) : AutoCloseable {
                 override fun onFailure(reason: Int) {
                     val message = "Could not create Wi-Fi Direct group: ${reasonText(reason)}"
                     listener?.onStatus(message)
-                    onFailure?.invoke(message)
+                    onGroupFailure?.invoke(message)
                 }
             })
         } catch (t: SecurityException) {
