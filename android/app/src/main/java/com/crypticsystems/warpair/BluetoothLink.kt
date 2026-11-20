@@ -4,8 +4,10 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
+import android.content.BroadcastReceiver
 import android.content.Context
-import android.os.Build
+import android.content.Intent
+import android.content.IntentFilter
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -13,18 +15,52 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Secure Bluetooth Classic RFCOMM transport adapter.
  *
- * It deliberately does not own discovery, pairing UI, transfer identity or file
- * checkpoints. Devices must be paired by Android first; the shared LanLink
- * handshake and resume protocol runs over the returned full-duplex stream.
+ * It owns Bluetooth Classic discovery and secure RFCOMM sockets. Android handles
+ * the system pairing prompt when needed; the shared LanLink handshake and resume
+ * protocol runs over the returned full-duplex stream.
  */
 class BluetoothLink(context: Context) : AutoCloseable {
-    data class Peer(val name: String, val address: String)
+    data class Peer(val name: String, val address: String, val bonded: Boolean = false)
+
+    interface DiscoveryListener {
+        fun onPeersChanged(peers: List<Peer>) {}
+        fun onFinished() {}
+        fun onError(message: String) {}
+    }
 
     private val appContext = context.applicationContext
     private val adapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private val closed = AtomicBoolean(false)
     @Volatile private var server: BluetoothServerSocket? = null
     @Volatile private var pendingSocket: BluetoothSocket? = null
+    @Volatile private var discoveryListener: DiscoveryListener? = null
+    @Volatile private var receiverRegistered = false
+    private val discoveredPeers = linkedMapOf<String, Peer>()
+    private val discoveryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                BluetoothDevice.ACTION_FOUND -> {
+                    try {
+                        @Suppress("DEPRECATION")
+                        val device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE) as? BluetoothDevice
+                        if (device != null) {
+                            val peer = Peer(device.name?.takeIf(String::isNotBlank) ?: "Bluetooth device", device.address, false)
+                            synchronized(discoveredPeers) {
+                                discoveredPeers[peer.address] = peer
+                                discoveryListener?.onPeersChanged(discoveredPeers.values.sortedBy { it.name.lowercase() })
+                            }
+                        }
+                    } catch (error: SecurityException) {
+                        discoveryListener?.onError(permissionError("read discovered Bluetooth devices", error).message.orEmpty())
+                    }
+                }
+                BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
+                    cancelDiscoveryReceiver()
+                    discoveryListener?.onFinished()
+                }
+            }
+        }
+    }
 
     fun isSupported(): Boolean = adapter != null
 
@@ -42,10 +78,57 @@ class BluetoothLink(context: Context) : AutoCloseable {
         ensureReady()
         return try {
             adapter!!.bondedDevices.orEmpty()
-                .map { Peer(it.name?.takeIf(String::isNotBlank) ?: "Bluetooth device", it.address) }
+                .map { Peer(it.name?.takeIf(String::isNotBlank) ?: "Bluetooth device", it.address, true) }
                 .sortedBy { it.name.lowercase() }
         } catch (error: SecurityException) {
             throw permissionError("list paired devices", error)
+        }
+    }
+
+    /** Discover nearby devices and merge them with the already-paired list. */
+    fun startDiscovery(listener: DiscoveryListener) {
+        ensureReady()
+        stopDiscovery()
+        discoveryListener = listener
+        synchronized(discoveredPeers) {
+            discoveredPeers.clear()
+            bondedPeers().forEach { discoveredPeers[it.address] = it }
+            listener.onPeersChanged(discoveredPeers.values.sortedBy { it.name.lowercase() })
+        }
+        try {
+            if (adapter!!.isDiscovering) adapter.cancelDiscovery()
+            val filter = IntentFilter(BluetoothDevice.ACTION_FOUND).apply {
+                addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                appContext.registerReceiver(discoveryReceiver, filter, Context.RECEIVER_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                appContext.registerReceiver(discoveryReceiver, filter)
+            }
+            receiverRegistered = true
+            if (!adapter.startDiscovery()) {
+                cancelDiscoveryReceiver()
+                listener.onError("Android could not start Bluetooth discovery. Check that Bluetooth is enabled and try again.")
+            }
+        } catch (error: SecurityException) {
+            cancelDiscoveryReceiver()
+            listener.onError(permissionError("discover nearby Bluetooth devices", error).message.orEmpty())
+        } catch (error: Throwable) {
+            cancelDiscoveryReceiver()
+            listener.onError("Bluetooth discovery failed: ${error.message}")
+        }
+    }
+
+    fun stopDiscovery() {
+        try { adapter?.cancelDiscovery() } catch (_: Throwable) {}
+        cancelDiscoveryReceiver()
+    }
+
+    private fun cancelDiscoveryReceiver() {
+        if (receiverRegistered) {
+            try { appContext.unregisterReceiver(discoveryReceiver) } catch (_: Throwable) {}
+            receiverRegistered = false
         }
     }
 
@@ -82,7 +165,7 @@ class BluetoothLink(context: Context) : AutoCloseable {
         }
     }
 
-    /** Connect to a device already paired in Android Bluetooth settings. */
+    /** Connect to a discovered or already-paired device; Android may prompt for pairing. */
     @Throws(IOException::class)
     fun connect(peerAddress: String): TransferConnection {
         ensureReady()
@@ -140,10 +223,12 @@ class BluetoothLink(context: Context) : AutoCloseable {
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        stopDiscovery()
         try { server?.close() } catch (_: Throwable) {}
         try { pendingSocket?.close() } catch (_: Throwable) {}
         server = null
         pendingSocket = null
+        discoveryListener = null
     }
 
     private class BluetoothTransferConnection(

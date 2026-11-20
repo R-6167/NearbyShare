@@ -140,6 +140,39 @@
                     android:layout_height="112dp"
                     android:dividerHeight="1dp" />
 
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="Bluetooth devices — paired devices and nearby discoverable phones"
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/bluetoothDiscoverButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="Find Bluetooth devices" />
+
+                <ListView
+                    android:id="@+id/bluetoothPeersList"
+                    android:layout_width="match_parent"
+                    android:layout_height="104dp"
+                    android:dividerHeight="1dp" />
+
+                <Button
+                    android:id="@+id/bluetoothHostButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Make discoverable &amp; receive over Bluetooth" />
+
+                <Button
+                    android:id="@+id/bluetoothJoinButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Connect to selected Bluetooth device" />
+
                 <Button
                     android:id="@+id/wifiDirectDiscoverButton"
                     android:layout_width="match_parent"

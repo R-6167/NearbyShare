@@ -1,6 +1,7 @@
 package com.crypticsystems.warpair
 
 import android.Manifest
+import android.bluetooth.BluetoothAdapter
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -37,10 +38,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var nsd: NsdNearby
     private var softAp: SoftApLink? = null
     private var wifiDirect: WifiDirectLink? = null
+    private var bluetooth: BluetoothLink? = null
+    private var bluetoothPeers: List<BluetoothLink.Peer> = emptyList()
+    private var selectedBluetoothPeer: BluetoothLink.Peer? = null
     private var wifiDirectPeers: List<WifiDirectLink.Peer> = emptyList()
     private var selectedWifiDirectPeer: WifiDirectLink.Peer? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private val activeControl = AtomicReference<LanLink.TransferControl?>(null)
+    private val activeTransportCancel = AtomicReference<(() -> Unit)?>(null)
 
     private val openDocuments = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
@@ -86,6 +91,16 @@ class MainActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.statusText)?.text = if (granted) "Location permission granted. Tap Find Wi-Fi Direct devices again." else "Wi-Fi Direct discovery requires Location permission on this Android version."
     }
 
+    private val requestBluetoothPermissions = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants ->
+        findViewById<TextView>(R.id.statusText)?.text = if (grants.values.all { it }) {
+            "Bluetooth permissions granted. Retry the Bluetooth action."
+        } else {
+            "Bluetooth Nearby devices permission is required. Allow it and retry."
+        }
+    }
+
     private val scanQrLauncher = registerForActivityResult(ScanContract()) { result ->
         val scanned = result.contents
         if (scanned.isNullOrBlank()) {
@@ -116,12 +131,24 @@ class MainActivity : AppCompatActivity() {
         val wifiDirectHostButton = findViewById<Button>(R.id.wifiDirectHostButton)
         val wifiDirectJoinButton = findViewById<Button>(R.id.wifiDirectJoinButton)
         val wifiDirectPeersList = findViewById<ListView>(R.id.wifiDirectPeersList)
+        val bluetoothDiscoverButton = findViewById<Button>(R.id.bluetoothDiscoverButton)
+        val bluetoothHostButton = findViewById<Button>(R.id.bluetoothHostButton)
+        val bluetoothJoinButton = findViewById<Button>(R.id.bluetoothJoinButton)
+        val bluetoothPeersList = findViewById<ListView>(R.id.bluetoothPeersList)
         val showQrButton = findViewById<Button>(R.id.showQrButton)
         val applyQrButton = findViewById<Button>(R.id.applyQrButton)
         val scanQrButton = findViewById<Button>(R.id.scanQrButton)
         val qrPayloadInput = findViewById<EditText>(R.id.qrPayloadInput)
         val nameInput = findViewById<EditText>(R.id.nameInput)
         val payloadInput = findViewById<EditText>(R.id.payloadInput)
+
+        bluetooth = BluetoothLink(this)
+        bluetoothPeersList.setOnItemClickListener { _, _, position, _ ->
+            selectedBluetoothPeer = bluetoothPeers.getOrNull(position)
+            selectedBluetoothPeer?.let { peer ->
+                status.text = "Selected Bluetooth device: ${peer.name} (${if (peer.bonded) "paired" else "not paired yet"})."
+            }
+        }
 
         wifiDirect = WifiDirectLink(this).also { adapter ->
             adapter.setListener(object : WifiDirectLink.Listener {
@@ -158,6 +185,7 @@ class MainActivity : AppCompatActivity() {
         cancelButton.isEnabled = false
         cancelButton.setOnClickListener {
             activeControl.get()?.cancel()
+            activeTransportCancel.get()?.invoke()
             status.text = "Cancel requested…"
         }
 
@@ -244,6 +272,80 @@ class MainActivity : AppCompatActivity() {
         discoverButton.setOnClickListener {
             nsd.startDiscovery()
             status.text = "Discovering WarPair peers on this Wi-Fi network…"
+        }
+
+        bluetoothDiscoverButton.setOnClickListener {
+            if (!ensureBluetoothPermissions()) return@setOnClickListener
+            startBluetoothDiscovery()
+        }
+
+        bluetoothHostButton.setOnClickListener {
+            if (!ensureBluetoothPermissions()) return@setOnClickListener
+            if (!ReceivedFiles.hasWritableLibrary()) {
+                status.text = "Grant storage access before receiving files."
+                ensureStorageAccess()
+                return@setOnClickListener
+            }
+            val adapter = getBluetoothLink()
+            if (!adapter.isSupported()) { status.text = "Bluetooth is not supported on this device."; return@setOnClickListener }
+            if (!adapter.isEnabled()) { status.text = "Turn on Bluetooth, then retry Bluetooth receive."; return@setOnClickListener }
+            startActivity(Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300))
+            val name = nameInput.text?.toString()?.ifBlank { "WarPair Bluetooth host" } ?: "WarPair Bluetooth host"
+            val control = LanLink.TransferControl()
+            runBg(
+                listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton, softApButton,
+                    wifiDirectDiscoverButton, wifiDirectHostButton, wifiDirectJoinButton,
+                    bluetoothDiscoverButton, bluetoothHostButton, bluetoothJoinButton),
+                cancelButton, status, control, cancelTransport = { adapter.close() },
+            ) {
+                try {
+                    mainHandler.post { status.text = "Waiting for a nearby Bluetooth device…" }
+                    val connection = adapter.acceptPeer()
+                    LanLink.hostConnected(
+                        connection = connection,
+                        deviceName = name,
+                        control = control,
+                        onProgress = progressTo(status),
+                        onPinConfirm = LanLink.PinConfirm { peerName, pin -> askPinConfirm(peerName, pin) },
+                        onOffer = LanLink.OfferDecision { offer -> askAcceptOffer(offer) },
+                    )
+                } finally {
+                    adapter.close()
+                    if (bluetooth === adapter) bluetooth = null
+                }
+            }
+        }
+
+        bluetoothJoinButton.setOnClickListener {
+            if (!ensureBluetoothPermissions()) return@setOnClickListener
+            val peer = selectedBluetoothPeer
+            if (peer == null) { status.text = "Find Bluetooth devices, then select the other phone."; return@setOnClickListener }
+            val adapter = getBluetoothLink()
+            if (!adapter.isEnabled()) { status.text = "Turn on Bluetooth, then retry."; return@setOnClickListener }
+            val name = nameInput.text?.toString()?.ifBlank { "WarPair Bluetooth sender" } ?: "WarPair Bluetooth sender"
+            val files = buildOutgoingFiles(payloadInput.text?.toString().orEmpty())
+            val control = LanLink.TransferControl()
+            runBg(
+                listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton, softApButton,
+                    wifiDirectDiscoverButton, wifiDirectHostButton, wifiDirectJoinButton,
+                    bluetoothDiscoverButton, bluetoothHostButton, bluetoothJoinButton),
+                cancelButton, status, control, cancelTransport = { adapter.close() },
+            ) {
+                try {
+                    val connection = adapter.connect(peer.address)
+                    LanLink.sendConnected(
+                        connection = connection,
+                        deviceName = name,
+                        files = files,
+                        control = control,
+                        onProgress = progressTo(status),
+                        onPinConfirm = LanLink.PinConfirm { peerName, pin -> askPinConfirm(peerName, pin) },
+                    )
+                } finally {
+                    adapter.close()
+                    if (bluetooth === adapter) bluetooth = null
+                }
+            }
         }
 
         wifiDirectDiscoverButton.setOnClickListener {
@@ -468,9 +570,80 @@ class MainActivity : AppCompatActivity() {
         activeControl.get()?.cancel()
         wifiDirect?.close()
         wifiDirect = null
+        bluetooth?.close()
+        bluetooth = null
         softAp?.stop()
         nsd.shutdown()
         super.onDestroy()
+    }
+
+    private fun getBluetoothLink(): BluetoothLink {
+        val current = bluetooth
+        if (current != null) return current
+        return BluetoothLink(this).also { bluetooth = it }
+    }
+
+    private fun ensureBluetoothPermissions(): Boolean {
+        if (Build.VERSION.SDK_INT >= 31) {
+            val required = arrayOf(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.BLUETOOTH_ADVERTISE,
+            )
+            val missing = required.filter {
+                ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+            }
+            if (missing.isNotEmpty()) {
+                requestBluetoothPermissions.launch(missing.toTypedArray())
+                return false
+            }
+        } else if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestBluetoothPermissions.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION))
+            return false
+        }
+        return true
+    }
+
+    private fun startBluetoothDiscovery() {
+        val status = findViewById<TextView>(R.id.statusText)
+        val list = findViewById<ListView>(R.id.bluetoothPeersList)
+        val adapter = try { getBluetoothLink() } catch (error: Throwable) {
+            status.text = "Bluetooth unavailable: ${error.message}"
+            return
+        }
+        if (!adapter.isSupported()) {
+            status.text = "This device does not support Bluetooth."
+            return
+        }
+        if (!adapter.isEnabled()) {
+            status.text = "Bluetooth is off. Turn it on in Android quick settings, then retry."
+            return
+        }
+        status.text = "Searching for nearby Bluetooth devices…"
+        adapter.startDiscovery(object : BluetoothLink.DiscoveryListener {
+            override fun onPeersChanged(peers: List<BluetoothLink.Peer>) {
+                mainHandler.post {
+                    bluetoothPeers = peers
+                    list.adapter = ArrayAdapter(
+                        this@MainActivity,
+                        android.R.layout.simple_list_item_1,
+                        if (peers.isEmpty()) listOf("(No Bluetooth devices found yet)")
+                        else peers.map { "${it.name}  • ${if (it.bonded) "Paired" else "Pair on connect"}" },
+                    )
+                    if (selectedBluetoothPeer != null && peers.none { it.address == selectedBluetoothPeer?.address }) {
+                        selectedBluetoothPeer = null
+                    }
+                }
+            }
+            override fun onFinished() {
+                mainHandler.post { status.text = "Bluetooth scan finished. Select a device; Android may ask you to pair when connecting." }
+            }
+            override fun onError(message: String) {
+                mainHandler.post { status.text = message }
+            }
+        })
     }
 
     private fun ensureWifiDirectPermission(): Boolean {
@@ -545,11 +718,13 @@ class MainActivity : AppCompatActivity() {
         cancelButton: Button,
         status: TextView,
         control: LanLink.TransferControl? = null,
+        cancelTransport: (() -> Unit)? = null,
         block: () -> String,
     ) {
         buttons.forEach { it.isEnabled = false }
         cancelButton.isEnabled = control != null
         activeControl.set(control)
+        activeTransportCancel.set(cancelTransport)
         status.text = "Working…"
         Thread {
             val result = try {
@@ -562,6 +737,7 @@ class MainActivity : AppCompatActivity() {
                 buttons.forEach { it.isEnabled = true }
                 cancelButton.isEnabled = false
                 activeControl.set(null)
+                activeTransportCancel.set(null)
             }
         }.start()
     }
