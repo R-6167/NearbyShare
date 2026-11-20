@@ -19,8 +19,8 @@ object TransferFileReceipt {
     }
 
     @Throws(IOException::class)
-    fun requireAccepted(fileSessionId: String, accepted: Boolean, reason: String?) {
-        if (!accepted || reason != reason(fileSessionId)) {
+    fun requireAccepted(fileSessionId: String, accepted: Boolean, reasonText: String?) {
+        if (!accepted || reasonText != reason(fileSessionId)) {
             throw IOException("Receiver did not confirm durable completion for file $fileSessionId")
         }
     }
