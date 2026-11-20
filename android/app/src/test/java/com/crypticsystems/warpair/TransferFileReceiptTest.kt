@@ -7,13 +7,13 @@ import java.io.IOException
 class TransferFileReceiptTest {
     @Test
     fun acceptsReceiptForSameLogicalFile() {
-        TransferFileReceipt.requireAccepted("file-1", true, "file_complete:file-1")
+        TransferFileReceipt.requireAccepted("file-1", true, TransferFileReceipt.reason("file-1"))
     }
 
     @Test
     fun rejectsReceiptForDifferentFile() {
         assertThrows(IOException::class.java) {
-            TransferFileReceipt.requireAccepted("file-1", true, "file_complete:file-2")
+            TransferFileReceipt.requireAccepted("file-1", true, TransferFileReceipt.reason("file-2"))
         }
     }
 
