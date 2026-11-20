@@ -17,7 +17,7 @@
 use crate::crypto::PublicKey;
 
 /// Protocol version.
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 
 /// Supported transport mediums (platform may support a subset).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,6 +148,14 @@ pub enum Message {
     Cancel {
         session_id: String,
         reason: Option<String>,
+    },
+
+    /// Sender declares the stable logical batch before any file offers.
+    BatchStart {
+        /// Stable identity shared by all retries of this ordered batch.
+        session_id: String,
+        /// Number of files expected in the batch.
+        file_count: u32,
     },
 
     /// Sender confirms that every offered file has reached a terminal result.
@@ -394,6 +402,7 @@ const TAG_PROGRESS: u8 = 6;
 const TAG_COMPLETE: u8 = 7;
 const TAG_CANCEL: u8 = 8;
 const TAG_BATCH_COMPLETE: u8 = 9;
+const TAG_BATCH_START: u8 = 10;
 
 impl Message {
     /// Encode this message to the binary wire format.
@@ -489,6 +498,11 @@ impl Message {
                 w.str(session_id);
                 w.opt_str(reason);
             }
+            Message::BatchStart { session_id, file_count } => {
+                w.u8(TAG_BATCH_START);
+                w.str(session_id);
+                w.u32(*file_count);
+            }
             Message::BatchComplete { session_id, file_count } => {
                 w.u8(TAG_BATCH_COMPLETE);
                 w.str(session_id);
@@ -573,6 +587,10 @@ impl Message {
             TAG_CANCEL => Ok(Message::Cancel {
                 session_id: r.str()?,
                 reason: r.opt_str()?,
+            }),
+            TAG_BATCH_START => Ok(Message::BatchStart {
+                session_id: r.str()?,
+                file_count: r.u32()?,
             }),
             TAG_BATCH_COMPLETE => Ok(Message::BatchComplete {
                 session_id: r.str()?,
