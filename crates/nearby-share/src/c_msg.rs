@@ -144,6 +144,21 @@ pub extern "C" fn nearby_c_msg_encode_complete(
 }
 
 #[no_mangle]
+pub extern "C" fn nearby_c_msg_encode_batch_complete(
+    session_id_ptr: *const u8,
+    session_id_len: usize,
+    file_count: u32,
+    out: *mut u8,
+    out_len: usize,
+) -> i32 {
+    let Some(session_id) = read_str(session_id_ptr, session_id_len) else {
+        return -1;
+    };
+    let msg = Message::BatchComplete { session_id, file_count };
+    write_bytes(out, out_len, &msg.encode())
+}
+
+#[no_mangle]
 pub extern "C" fn nearby_c_msg_encode_cancel(
     session_id_ptr: *const u8,
     session_id_len: usize,
@@ -182,6 +197,7 @@ pub extern "C" fn nearby_c_msg_tag(data_ptr: *const u8, data_len: usize) -> i32 
         Ok(Message::Progress { .. }) => 6,
         Ok(Message::Complete { .. }) => 7,
         Ok(Message::Cancel { .. }) => 8,
+        Ok(Message::BatchComplete { .. }) => 9,
         Err(_) => -4,
     }
 }
@@ -337,6 +353,35 @@ pub extern "C" fn nearby_c_msg_parse_complete(
             0
         }
         Ok(Message::Complete { .. }) => -6,
+        Ok(_) => -5,
+        Err(_) => -4,
+    }
+}
+
+/// Parse the explicit end-of-batch marker.
+#[no_mangle]
+pub extern "C" fn nearby_c_msg_parse_batch_complete(
+    data_ptr: *const u8,
+    data_len: usize,
+    sid_out: *mut u8,
+    sid_cap: usize,
+    sid_len_out: *mut i32,
+    file_count_out: *mut u32,
+) -> i32 {
+    if data_ptr.is_null() || sid_len_out.is_null() || file_count_out.is_null() {
+        return -1;
+    }
+    let data = unsafe { slice::from_raw_parts(data_ptr, data_len) };
+    match Message::decode(data) {
+        Ok(Message::BatchComplete { session_id, file_count }) => {
+            let n = write_bytes(sid_out, sid_cap, session_id.as_bytes());
+            if n < 0 { return n; }
+            unsafe {
+                *sid_len_out = n;
+                *file_count_out = file_count;
+            }
+            0
+        }
         Ok(_) => -5,
         Err(_) => -4,
     }
