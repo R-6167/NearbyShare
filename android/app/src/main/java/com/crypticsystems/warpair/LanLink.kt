@@ -165,18 +165,31 @@ object LanLink {
             val reports = mutableListOf<String>(); var index = 0
             while (true) {
                 control.check()
-                val offerPlain = try { readSealed(session, input) } catch (_: EOFException) { break }
-                catch (_: SocketTimeoutException) { break }
-                catch (t: Throwable) { if (reports.isNotEmpty()) break else throw t }
-                when (NearbyCore.msgTag(offerPlain)) {
-                    8 -> return "Peer cancelled"
-                    2 -> Unit
-                    else -> error("expected Offer")
+                val message = try {
+                    readSealed(session, input)
+                } catch (e: EOFException) {
+                    throw IOException("Peer disconnected before confirming batch completion", e)
+                } catch (e: SocketTimeoutException) {
+                    throw IOException("Timed out before peer confirmed batch completion", e)
                 }
-                index++; reports += receiveOne(session, input, output, peer, pin, offerPlain, index, control, onProgress, onOffer)
+                when (NearbyCore.msgTag(message)) {
+                    8 -> return "Peer cancelled"
+                    2 -> {
+                        index++
+                        reports += receiveOne(session, input, output, peer, pin, message, index, control, onProgress, onOffer)
+                    }
+                    9 -> {
+                        val complete = NearbyCore.parseBatchComplete(message)
+                        require(complete.batchId.isNotBlank()) { "batch id is missing" }
+                        require(complete.fileCount == reports.size && reports.isNotEmpty()) {
+                            "batch completion count mismatch: expected ${reports.size}, received ${complete.fileCount}"
+                        }
+                        return "BATCH OK (receiver) — ${reports.size}\n" + reports.joinToString("\n---\n")
+                    }
+                    else -> error("expected Offer or BatchComplete")
+                }
             }
-            if (reports.isEmpty()) return "No files from $peer"
-            return "BATCH OK (receiver) — ${reports.size}\n" + reports.joinToString("\n---\n")
+            error("receiver loop ended without batch completion")
         }
     }
 
@@ -208,6 +221,8 @@ object LanLink {
                 control.check()
                 sendOne(session, input, output, peer, pin, f, i + 1, files.size, control, onProgress)
             }
+            val batchId = "batch-${UUID.randomUUID()}"
+            sendSealed(session, output, NearbyCore.encodeBatchComplete(batchId, reports.size))
             return "BATCH OK (sender) — ${files.size}\n" + reports.joinToString("\n---\n")
         }
     }
