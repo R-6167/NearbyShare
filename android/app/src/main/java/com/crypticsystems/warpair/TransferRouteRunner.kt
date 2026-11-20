@@ -32,9 +32,9 @@ class TransferRouteRunner(candidates: List<TransferTransport>) {
                 val attempt = attempts[route]
                     ?: throw IOException("No connection adapter is available for $route")
                 val result = attempt()
-                if (!result.startsWith("BATCH OK")) {
-                    throw IOException("$route did not confirm every file: $result")
-                }
+                // A protocol-level refusal is not a transport failure. Never
+                // bypass a recipient's PIN abort, cancellation, or file rejection
+                // by silently offering the same content over another radio.
                 return result
             } catch (cancelled: CancellationException) {
                 throw cancelled
