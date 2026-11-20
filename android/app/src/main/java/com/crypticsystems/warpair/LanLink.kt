@@ -162,6 +162,18 @@ object LanLink {
             val pin = session.pin(); val peer = session.peerName()
             if (!onPinConfirm.confirm(peer, pin)) return "PIN not confirmed (host)"
             control.check()
+            val start = try {
+                readSealed(session, input)
+            } catch (e: EOFException) {
+                throw IOException("Peer disconnected before declaring the logical batch", e)
+            } catch (e: SocketTimeoutException) {
+                throw IOException("Timed out waiting for the logical batch declaration", e)
+            }
+            require(NearbyCore.msgTag(start) == 10) { "expected BatchStart before file offers" }
+            val batch = NearbyCore.parseBatchStart(start)
+            require(batch.batchId.isNotBlank() && batch.fileCount > 0) { "invalid logical batch declaration" }
+            sendSealed(session, output, NearbyCore.encodeResponse(batch.batchId, true, "batch_ready"))
+
             val reports = mutableListOf<String>(); var index = 0
             while (true) {
                 control.check()
@@ -175,18 +187,19 @@ object LanLink {
                 when (NearbyCore.msgTag(message)) {
                     8 -> return "Peer cancelled"
                     2 -> {
+                        require(index < batch.fileCount) { "peer offered more files than declared in batch" }
                         index++
                         reports += receiveOne(session, input, output, peer, pin, message, index, control, onProgress, onOffer)
                     }
                     9 -> {
                         val complete = NearbyCore.parseBatchComplete(message)
-                        require(complete.batchId.isNotBlank()) { "batch id is missing" }
-                        require(complete.fileCount == reports.size && reports.isNotEmpty()) {
-                            "batch completion count mismatch: expected ${reports.size}, received ${complete.fileCount}"
+                        require(complete.batchId == batch.batchId) { "batch completion identity does not match batch start" }
+                        require(complete.fileCount == batch.fileCount && reports.size == batch.fileCount) {
+                            "batch completion count mismatch: declared ${batch.fileCount}, received ${reports.size}, marker ${complete.fileCount}"
                         }
                         val allAccepted = reports.all { it.startsWith("OK ") }
                         val status = if (allAccepted) "BATCH OK" else "BATCH FINISHED WITH ISSUES"
-                        return "$status (receiver) — ${reports.size}\n" + reports.joinToString("\n---\n")
+                        return "${status} (receiver) — ${reports.size}\n" + reports.joinToString("\n---\n")
                     }
                     else -> error("expected Offer or BatchComplete")
                 }
@@ -221,12 +234,17 @@ object LanLink {
             session.completeHandshake(readFrame(input))
             val pin = session.pin(); val peer = session.peerName()
             if (!onPinConfirm.confirm(peer, pin)) return "PIN not confirmed (sender)"
+            val batchId = TransferBatchIdentity.from(files)
+            sendSealed(session, output, NearbyCore.encodeBatchStart(batchId, files.size))
+            val ready = NearbyCore.parseResponse(readSealed(session, input))
+            require(ready.accepted && ready.reason == "batch_ready") {
+                "receiver did not acknowledge the logical batch declaration"
+            }
             val reports = files.mapIndexed { i, f ->
                 control.check()
                 sendOne(session, input, output, peer, pin, f, i + 1, files.size, control, onProgress, onFileCompleted)
             }
             control.check()
-            val batchId = TransferBatchIdentity.from(files)
             sendSealed(session, output, NearbyCore.encodeBatchComplete(batchId, reports.size))
             val allAccepted = reports.all { it.startsWith("OK ") }
             val status = if (allAccepted) "BATCH OK" else "BATCH FINISHED WITH ISSUES"
