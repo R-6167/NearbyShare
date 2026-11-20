@@ -1165,6 +1165,7 @@ class MainActivity : AppCompatActivity() {
                 val root = generateSequence(t) { it.cause }.last()
                 val detail = root.message?.takeIf { it.isNotBlank() } ?: root.javaClass.simpleName
                 "Transfer couldn't complete: $detail"
+            }
             runOnUiThread {
                 status.text = result
                 buttons.forEach { it.isEnabled = true }
