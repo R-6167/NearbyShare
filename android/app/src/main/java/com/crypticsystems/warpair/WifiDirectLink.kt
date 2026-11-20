@@ -172,11 +172,11 @@ class WifiDirectLink(context: Context) : AutoCloseable {
         } catch (t: SecurityException) {
             val message = permissionHint(t)
             listener?.onStatus(message)
-            onFailure?.invoke(message)
+            onGroupFailure?.invoke(message)
         } catch (t: Throwable) {
             val message = "Wi-Fi Direct group error: ${t.message}"
             listener?.onStatus(message)
-            onFailure?.invoke(message)
+            onGroupFailure?.invoke(message)
         }
     }
 
