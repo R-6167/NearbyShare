@@ -186,7 +186,7 @@ class IncomingFileSink(
     private fun writeCheckpointMetadata() {
         val meta = File(file.parentFile, "${file.name}.meta")
         val temp = File(file.parentFile, "${file.name}.meta.tmp")
-        val content = "sessionKey=$sessionKey\\nexpectedSize=$expectedSize\\nnextSeq=$nextSeq\\nbytes=$bytesWritten\\n"
+        val content = "sessionKey=$sessionKey\nexpectedSize=$expectedSize\nnextSeq=$nextSeq\nbytes=$bytesWritten\n"
         FileOutputStream(temp).use { stream ->
             stream.write(content.toByteArray(Charsets.UTF_8))
             stream.fd.sync()
