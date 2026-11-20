@@ -47,6 +47,6 @@ class WifiDirectGroupSession(
         if (!closed.compareAndSet(false, true)) return
         try { observer?.close() } catch (_: Throwable) {}
         observer = null
-        if (groupCreated || groupFormed) adapter.removeGroup()
+        if (groupCreated) adapter.removeGroup()
     }
 }
