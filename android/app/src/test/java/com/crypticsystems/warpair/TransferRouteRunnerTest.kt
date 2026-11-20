@@ -53,17 +53,25 @@ class TransferRouteRunnerTest {
     }
 
     @Test
-    fun incompleteBatchIsNotReportedAsSuccessAndFallsBack() {
+    fun receiverRejectionDoesNotTriggerAnotherTransport() {
         val runner = TransferRouteRunner(
             listOf(TransferTransport.BLUETOOTH, TransferTransport.WIFI_DIRECT),
         )
+        val calls = mutableListOf<String>()
         val result = runner.execute(
             attempts = mapOf(
-                TransferTransport.BLUETOOTH to { "BATCH FINISHED WITH ISSUES" },
-                TransferTransport.WIFI_DIRECT to { "BATCH OK (sender) — 1" },
+                TransferTransport.BLUETOOTH to {
+                    calls += "bluetooth"
+                    "BATCH FINISHED WITH ISSUES — REJECTED by receiver"
+                },
+                TransferTransport.WIFI_DIRECT to {
+                    calls += "wifi"
+                    "BATCH OK (sender) — 1"
+                },
             ),
             control = LanLink.TransferControl(),
         )
-        assertEquals("BATCH OK (sender) — 1", result)
+        assertEquals(listOf("bluetooth"), calls)
+        assertEquals("BATCH FINISHED WITH ISSUES — REJECTED by receiver", result)
     }
 }
