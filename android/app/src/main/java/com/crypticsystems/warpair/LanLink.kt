@@ -184,7 +184,9 @@ object LanLink {
                         require(complete.fileCount == reports.size && reports.isNotEmpty()) {
                             "batch completion count mismatch: expected ${reports.size}, received ${complete.fileCount}"
                         }
-                        return "BATCH OK (receiver) — ${reports.size}\n" + reports.joinToString("\n---\n")
+                        val allAccepted = reports.all { it.startsWith("OK ") }
+                        val status = if (allAccepted) "BATCH OK" else "BATCH FINISHED WITH ISSUES"
+                        return "$status (receiver) — ${reports.size}\n" + reports.joinToString("\n---\n")
                     }
                     else -> error("expected Offer or BatchComplete")
                 }
@@ -221,9 +223,12 @@ object LanLink {
                 control.check()
                 sendOne(session, input, output, peer, pin, f, i + 1, files.size, control, onProgress)
             }
+            control.check()
             val batchId = "batch-${UUID.randomUUID()}"
             sendSealed(session, output, NearbyCore.encodeBatchComplete(batchId, reports.size))
-            return "BATCH OK (sender) — ${files.size}\n" + reports.joinToString("\n---\n")
+            val allAccepted = reports.all { it.startsWith("OK ") }
+            val status = if (allAccepted) "BATCH OK" else "BATCH FINISHED WITH ISSUES"
+            return "$status (sender) — ${files.size}\n" + reports.joinToString("\n---\n")
         }
     }
 
