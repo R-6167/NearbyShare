@@ -154,10 +154,12 @@
         </com.google.android.material.card.MaterialCardView>
 
         <TextView
+            android:id="@+id/advancedPairingHeading"
+            android:visibility="gone"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="22dp"
-            android:text="1. Pair devices"
+            android:text="Connection tools"
             android:textColor="?attr/colorOnSurface"
             android:textSize="19sp"
             android:textStyle="bold" />
@@ -334,10 +336,12 @@
         </com.google.android.material.card.MaterialCardView>
 
         <TextView
+            android:id="@+id/advancedTransferHeading"
+            android:visibility="gone"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="22dp"
-            android:text="2. Send or receive"
+            android:text="Manual transfer controls"
             android:textColor="?attr/colorOnSurface"
             android:textSize="19sp"
             android:textStyle="bold" />
