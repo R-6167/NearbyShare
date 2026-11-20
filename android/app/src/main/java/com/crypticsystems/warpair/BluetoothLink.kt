@@ -31,6 +31,7 @@ class BluetoothLink(context: Context) : AutoCloseable {
     private val appContext = context.applicationContext
     private val adapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private val closed = AtomicBoolean(false)
+    private val acceptCancelled = AtomicBoolean(false)
     @Volatile private var server: BluetoothServerSocket? = null
     @Volatile private var pendingSocket: BluetoothSocket? = null
     @Volatile private var discoveryListener: DiscoveryListener? = null
@@ -139,6 +140,7 @@ class BluetoothLink(context: Context) : AutoCloseable {
     @Throws(IOException::class)
     fun acceptPeer(): TransferConnection {
         ensureReady()
+        if (acceptCancelled.get()) throw IOException("Bluetooth accept was cancelled")
         val listening = try {
             adapter!!.listenUsingRfcommWithServiceRecord(SERVICE_NAME, SERVICE_UUID)
         } catch (error: SecurityException) {
@@ -147,6 +149,11 @@ class BluetoothLink(context: Context) : AutoCloseable {
             throw IOException("Could not start Bluetooth receiver: ${error.message}", error)
         }
         server = listening
+        if (acceptCancelled.get()) {
+            try { listening.close() } catch (_: Throwable) {}
+            server = null
+            throw IOException("Bluetooth accept was cancelled")
+        }
         try {
             val socket = listening.accept()
             pendingSocket = socket
@@ -210,6 +217,7 @@ class BluetoothLink(context: Context) : AutoCloseable {
 
     /** Stop a pending RFCOMM accept without closing a socket already handed to LanLink. */
     fun cancelAccept() {
+        acceptCancelled.set(true)
         val listening = server
         server = null
         try { listening?.close() } catch (_: Throwable) {}
