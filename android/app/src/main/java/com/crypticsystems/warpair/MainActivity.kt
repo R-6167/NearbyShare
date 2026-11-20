@@ -1162,8 +1162,9 @@ class MainActivity : AppCompatActivity() {
             val result = try {
                 block()
             } catch (t: Throwable) {
-                "Error: ${t.javaClass.simpleName}: ${t.message}\n${t.stackTraceToString().take(1200)}"
-            }
+                val root = generateSequence(t) { it.cause }.last()
+                val detail = root.message?.takeIf { it.isNotBlank() } ?: root.javaClass.simpleName
+                "Transfer couldn't complete: $detail"
             runOnUiThread {
                 status.text = result
                 buttons.forEach { it.isEnabled = true }
