@@ -41,6 +41,7 @@ class MainActivity : AppCompatActivity() {
     private var lastPeers: List<NsdNearby.Peer> = emptyList()
     private lateinit var nsd: NsdNearby
     private var softAp: SoftApLink? = null
+    @Volatile private var activeSoftApCredentials: SoftApLink.Credentials? = null
     private var wifiDirect: WifiDirectLink? = null
     private var bluetooth: BluetoothLink? = null
     private var bluetoothPeers: List<BluetoothLink.Peer> = emptyList()
@@ -242,6 +243,7 @@ class MainActivity : AppCompatActivity() {
                 softAp?.stop()
                 softAp = SoftApLink(this@MainActivity)
                 val creds = softAp!!.startBlocking()
+                activeSoftApCredentials = creds
                 val uri = QrBootstrap.encodeUri(
                     QrBootstrap.Payload(
                         host = creds.suggestedHostIp,
@@ -592,6 +594,8 @@ class MainActivity : AppCompatActivity() {
                                     lanEndpoints = lanEndpoints,
                                     bluetoothServiceUuid = if ("bluetooth" in invitationRoutes) BluetoothLink.SERVICE_UUID.toString() else null,
                                     bluetoothDeviceName = bluetoothAdapter?.localDeviceName()?.takeIf { "bluetooth" in invitationRoutes },
+                                    wifiSsid = activeSoftApCredentials?.ssid,
+                                    wifiPassword = activeSoftApCredentials?.password,
                                 ),
                             )
                         } else null
