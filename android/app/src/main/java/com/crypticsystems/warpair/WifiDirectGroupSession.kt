@@ -17,6 +17,7 @@ class WifiDirectGroupSession(
     private val closed = AtomicBoolean(false)
     private val started = AtomicBoolean(false)
     @Volatile private var groupFormed = false
+    @Volatile private var groupCreated = false
     @Volatile private var observer: Closeable? = null
 
     fun start() {
@@ -36,6 +37,7 @@ class WifiDirectGroupSession(
             if (failure != null && !closed.get()) {
                 statusCallback("Wi-Fi Direct unavailable for this receive session ($failure). LAN and Bluetooth remain active.")
             } else if (failure == null && !closed.get()) {
+                groupCreated = true
                 adapter.requestConnection()
             }
         }
@@ -45,6 +47,6 @@ class WifiDirectGroupSession(
         if (!closed.compareAndSet(false, true)) return
         try { observer?.close() } catch (_: Throwable) {}
         observer = null
-        if (groupFormed || started.get()) adapter.removeGroup()
+        if (groupCreated || groupFormed) adapter.removeGroup()
     }
 }
