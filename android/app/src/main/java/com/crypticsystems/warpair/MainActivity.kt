@@ -177,6 +177,8 @@ class MainActivity : AppCompatActivity() {
         val quickToolsButton = findViewById<Button>(R.id.quickToolsButton)
         val advancedPairingCard = findViewById<View>(R.id.advancedPairingCard)
         val advancedTransferCard = findViewById<View>(R.id.advancedTransferCard)
+        val advancedPairingHeading = findViewById<View>(R.id.advancedPairingHeading)
+        val advancedTransferHeading = findViewById<View>(R.id.advancedTransferHeading)
 
         // Primary actions stay simple; transport-specific controls remain available
         // below for diagnostics and compatibility while the unified invitation flow is built.
@@ -191,6 +193,8 @@ class MainActivity : AppCompatActivity() {
             val show = advancedPairingCard.visibility != View.VISIBLE
             advancedPairingCard.visibility = if (show) View.VISIBLE else View.GONE
             advancedTransferCard.visibility = if (show) View.VISIBLE else View.GONE
+            advancedPairingHeading.visibility = if (show) View.VISIBLE else View.GONE
+            advancedTransferHeading.visibility = if (show) View.VISIBLE else View.GONE
             smokeButton.visibility = if (show) View.VISIBLE else View.GONE
             quickToolsButton.text = if (show) "Close tools" else "More tools"
         }
