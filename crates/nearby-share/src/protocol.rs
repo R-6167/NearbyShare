@@ -17,7 +17,7 @@
 use crate::crypto::PublicKey;
 
 /// Protocol version.
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 
 /// Supported transport mediums (platform may support a subset).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
