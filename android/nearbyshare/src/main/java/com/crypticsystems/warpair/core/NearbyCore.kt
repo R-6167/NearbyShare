@@ -65,6 +65,7 @@ object NearbyCore {
         fun nearby_c_msg_parse_response(
             data: ByteArray, dataLen: Int,
             acceptedOut: IntByReference,
+            sidOut: ByteArray, sidCap: Int, sidLenOut: IntByReference,
             reasonOut: ByteArray?, reasonCap: Int, reasonLenOut: IntByReference?,
         ): Int
 
@@ -256,20 +257,24 @@ object NearbyCore {
         )
     }
 
-    data class ResponseInfo(val accepted: Boolean, val reason: String?)
+    data class ResponseInfo(val sessionId: String, val accepted: Boolean, val reason: String?)
 
     fun parseResponse(data: ByteArray): ResponseInfo {
         val acc = IntByReference()
+        val sidBuf = ByteArray(256)
+        val sidLen = IntByReference()
         val reasonBuf = ByteArray(256)
         val reasonLen = IntByReference()
         val rc = lib().nearby_c_msg_parse_response(
-            data, data.size, acc, reasonBuf, reasonBuf.size, reasonLen,
+            data, data.size, acc, sidBuf, sidBuf.size, sidLen,
+            reasonBuf, reasonBuf.size, reasonLen,
         )
         if (rc != 0) error("parseResponse $rc")
+        val sessionId = String(sidBuf, 0, sidLen.value, StandardCharsets.UTF_8)
         val reason = if (reasonLen.value > 0) {
             String(reasonBuf, 0, reasonLen.value, StandardCharsets.UTF_8)
         } else null
-        return ResponseInfo(acc.value != 0, reason)
+        return ResponseInfo(sessionId, acc.value != 0, reason)
     }
 
     fun parseResponseAccepted(data: ByteArray): Boolean = parseResponse(data).accepted
