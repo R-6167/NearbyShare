@@ -163,7 +163,7 @@
             android:textStyle="bold" />
 
         <com.google.android.material.card.MaterialCardView
-            android:id="@+id/advancedTransferCard"
+            android:id="@+id/advancedPairingCard"
             android:visibility="gone"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -343,6 +343,8 @@
             android:textStyle="bold" />
 
         <com.google.android.material.card.MaterialCardView
+            android:id="@+id/advancedTransferCard"
+            android:visibility="gone"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
