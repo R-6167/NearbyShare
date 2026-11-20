@@ -64,6 +64,7 @@ class MainActivity : AppCompatActivity() {
             try {
                 loaded += ReceivedFiles.readPickedMeta(this, uri)
             } catch (t: Throwable) {
+                scanAfterFilePick = false
                 findViewById<TextView>(R.id.pickedFileText).text = "Failed to read: ${t.message}"
                 return@registerForActivityResult
             }
@@ -924,6 +925,10 @@ class MainActivity : AppCompatActivity() {
         block: () -> String,
     ) {
         buttons.forEach { it.isEnabled = false }
+        val primaryActions = listOf(
+            R.id.quickSendButton, R.id.quickReceiveButton, R.id.quickScanButton,
+        ).mapNotNull { findViewById<Button?>(it) }
+        primaryActions.forEach { it.isEnabled = false }
         cancelButton.isEnabled = control != null
         activeControl.set(control)
         activeTransportCancel.set(cancelTransport)
@@ -937,6 +942,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 status.text = result
                 buttons.forEach { it.isEnabled = true }
+                primaryActions.forEach { it.isEnabled = true }
                 cancelButton.isEnabled = false
                 activeControl.set(null)
                 activeTransportCancel.set(null)
