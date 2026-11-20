@@ -253,6 +253,9 @@ object LanLink {
         if (NearbyCore.msgTag(respPlain) == 8) return "CANCELLED by peer"
         val response = NearbyCore.parseResponse(respPlain)
         if (!response.accepted) return "REJECTED ${file.fileName}"
+        if (response.reason == "already_complete") {
+            return "OK ${file.fileName} already_complete"
+        }
         val skip = response.reason?.removePrefix("resume_bytes:")?.toLongOrNull() ?: 0L
         require(skip in 0..offerSize && (skip == offerSize || skip % CHUNK == 0L)) {
             "receiver requested an invalid resume offset"
@@ -298,6 +301,11 @@ object LanLink {
         if (offer.size !in 0..MAX_BYTES) {
             sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, false, "invalid_file_size"))
             return "REJECTED ${offer.fileName}: invalid file size"
+        }
+        val completed = ReceivedFiles.findCompleted(offer.fileName, offer.size, offer.sessionId)
+        if (completed != null) {
+            sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, true, "already_complete"))
+            return "OK ${completed.fileName} bytes=${completed.bytes} already_complete"
         }
         val category = ReceivedFiles.categoryFor(offer.fileName)
         val partial = ReceivedFiles.findPartial(offer.fileName, offer.size, offer.sessionId)
@@ -365,6 +373,9 @@ object LanLink {
                             complete.sessionId, complete.fileId, complete.checksum, actualHash,
                         )
                         val save = sink.finish()
+                        ReceivedFiles.recordCompleted(
+                            offer.sessionId, offer.fileName, offer.size, save, actualHash,
+                        )
                         return "OK ${save.fileName} bytes=${save.bytes} resumed=${resume != null}"
                     }
                     8 -> { sink.abort(true); return "CANCELLED by peer" }
