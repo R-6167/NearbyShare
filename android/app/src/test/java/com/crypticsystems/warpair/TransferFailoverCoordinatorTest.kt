@@ -77,7 +77,7 @@ class TransferFailoverCoordinatorTest {
             coordinator.execute(
                 mapOf(
                     TransferTransport.WIFI_DIRECT to TransportAttempt { _, _ ->
-                        throw CancellationException("user cancelled")
+                        throw LanLink.TransferCancelledException()
                     },
                     TransferTransport.BLUETOOTH to TransportAttempt { _, _ ->
                         bluetoothCalled = true
