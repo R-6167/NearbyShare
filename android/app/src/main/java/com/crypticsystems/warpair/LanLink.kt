@@ -200,10 +200,11 @@ object LanLink {
         connection: TransferConnection, deviceName: String, files: List<OutgoingFile>,
         control: TransferControl = TransferControl(), onProgress: Progress? = null,
         onPinConfirm: PinConfirm,
+        onFileCompleted: ((OutgoingFile) -> Unit)? = null,
     ): String {
         require(files.isNotEmpty())
         return connection.use {
-            runClient(it.input, it.output, deviceName, files, control, onProgress, onPinConfirm)
+            runClient(it.input, it.output, deviceName, files, control, onProgress, onPinConfirm, onFileCompleted)
         }
     }
 
@@ -211,6 +212,7 @@ object LanLink {
         inputStream: InputStream, outputStream: OutputStream, deviceName: String,
         files: List<OutgoingFile>, control: TransferControl,
         onProgress: Progress?, onPinConfirm: PinConfirm,
+        onFileCompleted: ((OutgoingFile) -> Unit)?,
     ): String {
         val input = DataInputStream(inputStream)
         val output = DataOutputStream(outputStream)
@@ -221,7 +223,7 @@ object LanLink {
             if (!onPinConfirm.confirm(peer, pin)) return "PIN not confirmed (sender)"
             val reports = files.mapIndexed { i, f ->
                 control.check()
-                sendOne(session, input, output, peer, pin, f, i + 1, files.size, control, onProgress)
+                sendOne(session, input, output, peer, pin, f, i + 1, files.size, control, onProgress, onFileCompleted)
             }
             control.check()
             val batchId = "batch-${UUID.randomUUID()}"
@@ -242,6 +244,7 @@ object LanLink {
         session: NearbyCore.Session, input: DataInputStream, output: DataOutputStream,
         peer: String, pin: String, file: OutgoingFile, index: Int, total: Int,
         control: TransferControl, onProgress: Progress?,
+        onFileCompleted: ((OutgoingFile) -> Unit)?,
     ): String {
         val sessionId = file.sessionId.also { require(it.isNotBlank()) { "file session id is required" } }
         require(file.size == -1L || file.size in 0..MAX_BYTES) {
@@ -254,6 +257,7 @@ object LanLink {
         val response = NearbyCore.parseResponse(respPlain)
         if (!response.accepted) return "REJECTED ${file.fileName}"
         if (response.reason == "already_complete") {
+            onFileCompleted?.invoke(file)
             return "OK ${file.fileName} already_complete"
         }
         val skip = response.reason?.removePrefix("resume_bytes:")?.toLongOrNull() ?: 0L
@@ -285,7 +289,10 @@ object LanLink {
             require(sent == offerSize) { "source size changed: expected $offerSize bytes, read $sent" }
             sendSealed(session, output, NearbyCore.encodeChunk(sessionId, 1, seq, ByteArray(0), true))
             sendSealed(session, output, NearbyCore.encodeComplete(sessionId, hasher.finalizeHash()))
-            return "OK ${file.fileName} bytes=$sent skip=$skip"
+            val receipt = NearbyCore.parseResponse(readSealed(session, input))
+            TransferFileReceipt.requireAccepted(sessionId, receipt.accepted, receipt.reason)
+            onFileCompleted?.invoke(file)
+            return "OK ${file.fileName} bytes=$sent skip=$skip receiver_confirmed"
         } catch (_: TransferCancelledException) {
             try { sendSealed(session, output, NearbyCore.encodeCancel(sessionId, "user_cancel")) } catch (_: Throwable) {}
             return "CANCELLED ${file.fileName}"
@@ -375,6 +382,10 @@ object LanLink {
                         val save = sink.finish()
                         ReceivedFiles.recordCompleted(
                             offer.sessionId, offer.fileName, offer.size, save, actualHash,
+                        )
+                        sendSealed(
+                            session, output,
+                            NearbyCore.encodeResponse(offer.sessionId, true, TransferFileReceipt.reason(offer.sessionId)),
                         )
                         return "OK ${save.fileName} bytes=${save.bytes} resumed=${resume != null}"
                     }
