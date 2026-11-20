@@ -41,6 +41,10 @@ object NearbyCore {
 
         fun nearby_c_msg_encode_complete(sid: ByteArray, sidLen: Int, hash: ByteArray, out: ByteArray, outLen: Int): Int
 
+        fun nearby_c_msg_encode_batch_complete(
+            sid: ByteArray, sidLen: Int, fileCount: Int, out: ByteArray, outLen: Int,
+        ): Int
+
         fun nearby_c_msg_encode_cancel(
             sid: ByteArray, sidLen: Int, reason: ByteArray?, reasonLen: Int, out: ByteArray, outLen: Int,
         ): Int
@@ -69,6 +73,11 @@ object NearbyCore {
         fun nearby_c_msg_parse_complete(
             data: ByteArray, dataLen: Int, sidOut: ByteArray, sidCap: Int, sidLenOut: IntByReference,
             fileIdOut: IntByReference, hashOut: ByteArray,
+        ): Int
+
+        fun nearby_c_msg_parse_batch_complete(
+            data: ByteArray, dataLen: Int, sidOut: ByteArray, sidCap: Int,
+            sidLenOut: IntByReference, fileCountOut: IntByReference,
         ): Int
 
         fun nearby_c_hash(data: ByteArray, dataLen: Int, out: ByteArray): Int
@@ -188,6 +197,13 @@ object NearbyCore {
         return readBytes { o, l -> lib().nearby_c_msg_encode_complete(sid, sid.size, hash32, o, l) }
     }
 
+    fun encodeBatchComplete(batchId: String, fileCount: Int): ByteArray {
+        require(batchId.isNotBlank())
+        require(fileCount >= 0)
+        val sid = batchId.toByteArray(StandardCharsets.UTF_8)
+        return readBytes { o, l -> lib().nearby_c_msg_encode_batch_complete(sid, sid.size, fileCount, o, l) }
+    }
+
     fun encodeCancel(sessionId: String, reason: String? = null): ByteArray {
         val sid = sessionId.toByteArray(StandardCharsets.UTF_8)
         val reasonBytes = reason?.toByteArray(StandardCharsets.UTF_8)
@@ -277,6 +293,17 @@ object NearbyCore {
         return CompleteInfo(
             String(sid, 0, sidLen.value, StandardCharsets.UTF_8), fileId.value, checksum,
         )
+    }
+
+    data class BatchCompleteInfo(val batchId: String, val fileCount: Int)
+
+    fun parseBatchComplete(data: ByteArray): BatchCompleteInfo {
+        val sid = ByteArray(256)
+        val sidLen = IntByReference()
+        val count = IntByReference()
+        val rc = lib().nearby_c_msg_parse_batch_complete(data, data.size, sid, sid.size, sidLen, count)
+        if (rc != 0) error("parseBatchComplete $rc")
+        return BatchCompleteInfo(String(sid, 0, sidLen.value, StandardCharsets.UTF_8), count.value)
     }
 
     fun hash(data: ByteArray): ByteArray {

@@ -432,7 +432,7 @@ pub fn msg_encode_complete(session_id: String, file_id: u32, hash32: Vec<u8>) ->
     .encode())
 }
 
-/// Message tag 1..=8.
+/// Message tag 1..=9.
 #[uniffi::export]
 pub fn msg_tag(data: Vec<u8>) -> Result<u8, NearbyError> {
     match Message::decode(&data) {
@@ -444,6 +444,7 @@ pub fn msg_tag(data: Vec<u8>) -> Result<u8, NearbyError> {
         Ok(Message::Progress { .. }) => Ok(6),
         Ok(Message::Complete { .. }) => Ok(7),
         Ok(Message::Cancel { .. }) => Ok(8),
+        Ok(Message::BatchComplete { .. }) => Ok(9),
         Err(e) => Err(NearbyError::Protocol {
             reason: e.to_string(),
         }),
