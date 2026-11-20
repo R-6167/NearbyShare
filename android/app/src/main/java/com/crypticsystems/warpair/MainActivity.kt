@@ -1034,6 +1034,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun localIpv4Endpoints(port: Int): List<QrBootstrap.Endpoint> {
         return localIpv4List().lineSequence()
+            // Wi-Fi Direct has its own peer negotiation; its P2P interface address is
+            // not a normal LAN endpoint until the sender joins that group.
+            .filter { line -> !line.substringBefore(": ").contains("p2p", ignoreCase = true) }
             .mapNotNull { line -> line.substringAfter(": ", "").trim().takeIf { it.isNotBlank() && it != "(none)" } }
             .distinct()
             .take(4)
