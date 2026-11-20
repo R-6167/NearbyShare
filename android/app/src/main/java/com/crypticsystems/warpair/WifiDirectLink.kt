@@ -12,10 +12,12 @@ import android.net.wifi.p2p.WifiP2pManager
 import android.os.Build
 import android.os.Looper
 import androidx.core.content.ContextCompat
+import java.io.Closeable
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -54,6 +56,7 @@ class WifiDirectLink(context: Context) : AutoCloseable {
     private val closed = AtomicBoolean(false)
     @Volatile private var listener: Listener? = null
     @Volatile private var registered = false
+    private val connectionObservers = CopyOnWriteArrayList<(Connection) -> Unit>()
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -100,6 +103,16 @@ class WifiDirectLink(context: Context) : AutoCloseable {
         listener = value
     }
 
+    /**
+     * Observe group formation without replacing the UI/discovery listener.
+     * The returned handle removes only this observer.
+     */
+    fun addConnectionObserver(observer: (Connection) -> Unit): Closeable {
+        ensureOpen()
+        connectionObservers += observer
+        return Closeable { connectionObservers -= observer }
+    }
+
     fun discoverPeers() {
         ensureOpen()
         try {
@@ -143,16 +156,27 @@ class WifiDirectLink(context: Context) : AutoCloseable {
     }
 
     /** Create a group when this phone is explicitly selected as the host. */
-    fun createGroup() {
+    fun createGroup(onGroupFailure: ((String) -> Unit)? = null) {
         ensureOpen()
         try {
-            manager.createGroup(channel, actionListener("Creating Wi-Fi Direct group…") {
-                "Could not create Wi-Fi Direct group: $it"
+            manager.createGroup(channel, object : WifiP2pManager.ActionListener {
+                override fun onSuccess() {
+                    listener?.onStatus("Creating Wi-Fi Direct group…")
+                }
+                override fun onFailure(reason: Int) {
+                    val message = "Could not create Wi-Fi Direct group: ${reasonText(reason)}"
+                    listener?.onStatus(message)
+                    onGroupFailure?.invoke(message)
+                }
             })
         } catch (t: SecurityException) {
-            listener?.onStatus(permissionHint(t))
+            val message = permissionHint(t)
+            listener?.onStatus(message)
+            onGroupFailure?.invoke(message)
         } catch (t: Throwable) {
-            listener?.onStatus("Wi-Fi Direct group error: ${t.message}")
+            val message = "Wi-Fi Direct group error: ${t.message}"
+            listener?.onStatus(message)
+            onGroupFailure?.invoke(message)
         }
     }
 
@@ -192,9 +216,11 @@ class WifiDirectLink(context: Context) : AutoCloseable {
         try {
             manager.requestConnectionInfo(channel) { info: WifiP2pInfo ->
                 val host = if (info.groupFormed) info.groupOwnerAddress?.hostAddress else null
-                listener?.onConnectionChanged(
-                    Connection(info.groupFormed, info.isGroupOwner, host),
-                )
+                val connection = Connection(info.groupFormed, info.isGroupOwner, host)
+                listener?.onConnectionChanged(connection)
+                connectionObservers.forEach { observer ->
+                    try { observer(connection) } catch (_: Throwable) {}
+                }
                 listener?.onStatus(
                     if (!info.groupFormed) "Waiting for a Wi-Fi Direct group."
                     else "Wi-Fi Direct group ready; group owner is ${host ?: "unknown"}.",
@@ -278,5 +304,6 @@ class WifiDirectLink(context: Context) : AutoCloseable {
             registered = false
         }
         listener = null
+        connectionObservers.clear()
     }
 }

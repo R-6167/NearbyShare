@@ -489,6 +489,7 @@ class MainActivity : AppCompatActivity() {
                 cancelTransport = { activeReceiver.get()?.close() },
             ) {
                 var bluetoothAdapter: BluetoothLink? = null
+                var wifiDirectGroup: WifiDirectGroupSession? = null
                 var receiver: MultiTransportReceiver? = null
                 var finalResult: String? = null
                 try {
@@ -512,15 +513,28 @@ class MainActivity : AppCompatActivity() {
                             adapter.stopDiscovery()
                             acceptors += BluetoothReceiverAcceptor(adapter)
                         }
+                        // A formed Wi-Fi Direct group routes into the existing wildcard TCP
+                        // listener above. Do not bind a second socket on the same port.
+                        wifiDirectGroup = if (wifiDirect != null && hasWifiDirectPermission()) {
+                            try {
+                                WifiDirectGroupSession(wifiDirect!!) { message ->
+                                    mainHandler.post { status.text = message }
+                                }.also { it.start() }
+                            } catch (groupFailure: Throwable) {
+                                mainHandler.post {
+                                    status.text = "Wi-Fi Direct group could not start (${groupFailure.message}); LAN and Bluetooth remain available."
+                                }
+                                null
+                            }
+                        } else null
                         val active = MultiTransportReceiver(acceptors)
                         receiver = active
                         activeReceiver.set(active)
                         mainHandler.post {
-                            status.text = if (bluetoothAdapter != null) {
-                                "Waiting for a peer over Wi-Fi / LAN / SoftAP or Bluetooth…"
-                            } else {
-                                "Waiting for a peer over Wi-Fi / LAN / SoftAP… (Bluetooth permission unavailable)"
-                            }
+                            val routes = mutableListOf("Wi-Fi / LAN / SoftAP")
+                            if (wifiDirectGroup != null) routes += "Wi-Fi Direct"
+                            if (bluetoothAdapter != null) routes += "Bluetooth"
+                            status.text = "Waiting for a peer over ${routes.joinToString(" / ")}…"
                         }
 
                         // Listener setup/accept failures are fatal for this host session. Once a
@@ -555,6 +569,8 @@ class MainActivity : AppCompatActivity() {
                             receiver?.close()
                             receiver = null
                             activeReceiver.set(null)
+                            wifiDirectGroup?.close()
+                            wifiDirectGroup = null
                             if (bluetooth === bluetoothAdapter) bluetooth = null
                             bluetoothAdapter = null
                             mainHandler.post { nsd.stopAdvertising() }
@@ -564,6 +580,8 @@ class MainActivity : AppCompatActivity() {
                 } finally {
                     receiver?.close()
                     activeReceiver.set(null)
+                    wifiDirectGroup?.close()
+                    wifiDirectGroup = null
                     if (bluetooth === bluetoothAdapter) bluetooth = null
                     mainHandler.post { nsd.stopAdvertising() }
                 }
@@ -791,6 +809,13 @@ class MainActivity : AppCompatActivity() {
             }
         })
     }
+
+    private fun hasWifiDirectPermission(): Boolean =
+        if (Build.VERSION.SDK_INT >= 33) {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED
+        } else {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        }
 
     private fun ensureWifiDirectPermission(): Boolean {
         if (Build.VERSION.SDK_INT >= 33) {
