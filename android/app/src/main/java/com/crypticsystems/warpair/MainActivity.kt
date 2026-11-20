@@ -34,6 +34,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 class MainActivity : AppCompatActivity() {
     private var pickedFiles: List<PickedFile> = emptyList()
+    private var scanAfterFilePick = false
     private var lastPeers: List<NsdNearby.Peer> = emptyList()
     private lateinit var nsd: NsdNearby
     private var softAp: SoftApLink? = null
@@ -50,7 +51,10 @@ class MainActivity : AppCompatActivity() {
     private val openDocuments = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris: List<Uri> ->
-        if (uris.isEmpty()) return@registerForActivityResult
+        if (uris.isEmpty()) {
+            scanAfterFilePick = false
+            return@registerForActivityResult
+        }
         val loaded = mutableListOf<PickedFile>()
         for (uri in uris) {
             try {
@@ -67,6 +71,16 @@ class MainActivity : AppCompatActivity() {
         pickedFiles = loaded
         findViewById<TextView>(R.id.pickedFileText).text =
             loaded.joinToString("\n", prefix = "${loaded.size} file(s):\n") { "• ${it.displayName}" }
+        if (scanAfterFilePick) {
+            scanAfterFilePick = false
+            val options = ScanOptions().apply {
+                setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                setPrompt("Scan the receiver's WarPair QR")
+                setBeepEnabled(false)
+                setOrientationLocked(false)
+            }
+            scanQrLauncher.launch(options)
+        }
     }
 
     private val requestLegacyStorage = registerForActivityResult(
@@ -141,6 +155,18 @@ class MainActivity : AppCompatActivity() {
         val qrPayloadInput = findViewById<EditText>(R.id.qrPayloadInput)
         val nameInput = findViewById<EditText>(R.id.nameInput)
         val payloadInput = findViewById<EditText>(R.id.payloadInput)
+        val quickSendButton = findViewById<Button>(R.id.quickSendButton)
+        val quickReceiveButton = findViewById<Button>(R.id.quickReceiveButton)
+        val quickScanButton = findViewById<Button>(R.id.quickScanButton)
+
+        // Primary actions stay simple; transport-specific controls remain available
+        // below for diagnostics and compatibility while the unified invitation flow is built.
+        quickSendButton.setOnClickListener {
+            scanAfterFilePick = true
+            openDocuments.launch(arrayOf("*/*"))
+        }
+        quickReceiveButton.setOnClickListener { hostButton.performClick() }
+        quickScanButton.setOnClickListener { scanQrButton.performClick() }
 
         bluetooth = BluetoothLink(this)
         bluetoothPeersList.setOnItemClickListener { _, _, position, _ ->
@@ -642,7 +668,12 @@ class MainActivity : AppCompatActivity() {
                 appendLine("Peer: ${payload.deviceName ?: "WarPair device"}")
                 appendLine("Address: ${payload.host}:${payload.port}")
                 payload.ssid?.let { appendLine("Wi‑Fi: $it — join this network before connecting.") }
-                append("Ready. Choose files if needed, then tap Connect / Send.")
+                append("Connection details loaded.")
+            }
+            if (pickedFiles.isNotEmpty()) {
+                findViewById<Button>(R.id.joinButton).performClick()
+            } else {
+                findViewById<TextView>(R.id.statusText).append("\nChoose files, then tap Send.")
             }
         } catch (t: Throwable) {
             findViewById<TextView>(R.id.statusText).text =
