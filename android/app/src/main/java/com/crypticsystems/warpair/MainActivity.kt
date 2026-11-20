@@ -412,11 +412,9 @@ class MainActivity : AppCompatActivity() {
                 var bluetoothAdapter: BluetoothLink? = null
                 var receiver: MultiTransportReceiver? = null
                 var finalResult: String? = null
-                var peerAttempt = 0
                 try {
                     while (finalResult == null) {
                         control.check()
-                        peerAttempt++
                         val acceptors = mutableListOf<ReceiverAcceptor>()
                         acceptors += TcpReceiverAcceptor(listenPort) { boundPort ->
                             mainHandler.post {
