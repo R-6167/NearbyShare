@@ -9,7 +9,6 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
-import java.io.OutputStream
 
 enum class FileCategory(val folderName: String) {
     Music("Music"), Videos("Videos"), Images("Images"),
@@ -26,7 +25,7 @@ data class SaveResult(
 
 data class PartialInfo(
     val fileName: String, val expectedSize: Long, val bytesReceived: Long,
-    val nextSeq: Long, val partialFile: File,
+    val nextSeq: Long, val partialFile: File, val sessionId: String,
 )
 
 object ReceivedFiles {
@@ -78,31 +77,68 @@ object ReceivedFiles {
     fun openPickedStream(context: Context, uri: Uri): InputStream =
         context.contentResolver.openInputStream(uri) ?: error("Cannot open file")
 
-    fun findPartial(fileName: String, expectedSize: Long): PartialInfo? {
-        val safe = sanitizeFileName(fileName)
-        val dir = categoryDir(categoryFor(safe))
-        val partial = File(dir, "$safe$PARTIAL_SUFFIX")
-        if (!partial.isFile || partial.length() <= 0) return null
-        if (expectedSize > 0 && partial.length() >= expectedSize) return null
-        var nextSeq = 0L
-        File(dir, "$safe$PARTIAL_SUFFIX.meta").takeIf { it.isFile }?.readLines()?.forEach {
-            if (it.startsWith("nextSeq=")) nextSeq = it.removePrefix("nextSeq=").toLongOrNull() ?: 0
-        }
-        return PartialInfo(safe, expectedSize, partial.length(), nextSeq, partial)
+    private fun partialToken(sessionId: String): String {
+        require(sessionId.isNotBlank() && sessionId.length <= 256) { "invalid file session id" }
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(sessionId.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
     }
 
-    fun openIncoming(fileName: String, resume: PartialInfo? = null): IncomingFileSink {
+    private fun partialFile(dir: File, safeName: String, sessionId: String) =
+        File(dir, "$safeName.${partialToken(sessionId)}$PARTIAL_SUFFIX")
+
+    fun findPartial(fileName: String, expectedSize: Long, sessionId: String): PartialInfo? {
+        val safe = sanitizeFileName(fileName)
+        val dir = categoryDir(categoryFor(safe))
+        val partial = partialFile(dir, safe, sessionId)
+        val meta = File(dir, "${partial.name}.meta")
+        if (!partial.isFile || partial.length() <= 0 || !meta.isFile) return null
+        val values = meta.readLines().mapNotNull { line ->
+            val split = line.indexOf('=')
+            if (split <= 0) null else line.substring(0, split) to line.substring(split + 1)
+        }.toMap()
+        if (values["sessionKey"] != partialToken(sessionId)) return null
+        if (values["expectedSize"]?.toLongOrNull() != expectedSize) return null
+        val bytes = values["bytes"]?.toLongOrNull() ?: return null
+        val nextSeq = values["nextSeq"]?.toLongOrNull() ?: return null
+        if (bytes != partial.length() || bytes !in 1 until expectedSize) return null
+        if (bytes % TransferFileCheckpoint.DEFAULT_CHUNK_SIZE != 0L ||
+            nextSeq != bytes / TransferFileCheckpoint.DEFAULT_CHUNK_SIZE
+        ) return null
+        return PartialInfo(safe, expectedSize, bytes, nextSeq, partial, sessionId)
+    }
+
+    fun openIncoming(
+        fileName: String,
+        resume: PartialInfo? = null,
+        sessionId: String,
+        expectedSize: Long,
+    ): IncomingFileSink {
         ensureLibrary()
         val safe = sanitizeFileName(fileName)
         val category = categoryFor(safe)
         val dir = categoryDir(category)
-        return if (resume != null && resume.partialFile.isFile) {
-            IncomingFileSink(resume.partialFile, category, safe, FileOutputStream(resume.partialFile, true), resume.bytesReceived, resume.nextSeq, true)
-        } else {
-            val partial = File(dir, "$safe$PARTIAL_SUFFIX")
-            partial.delete(); File(dir, "$safe$PARTIAL_SUFFIX.meta").delete()
-            IncomingFileSink(partial, category, safe, FileOutputStream(partial), 0, 0, true)
+        val token = partialToken(sessionId)
+        require(resume == null || (resume.sessionId == sessionId && resume.expectedSize == expectedSize)) {
+            "resume checkpoint belongs to a different logical file transfer"
         }
+        val partial = partialFile(dir, safe, sessionId)
+        if (resume != null) {
+            require(resume.partialFile.canonicalFile == partial.canonicalFile) {
+                "resume checkpoint path does not match this logical file transfer"
+            }
+            require(partial.isFile && partial.length() == resume.bytesReceived) {
+                "resume checkpoint is no longer durable"
+            }
+        } else {
+            partial.delete()
+            File(dir, "${partial.name}.meta").delete()
+        }
+        return IncomingFileSink(
+            partial, category, safe, FileOutputStream(partial, resume != null),
+            resume?.bytesReceived ?: 0L, resume?.nextSeq ?: 0L,
+            expectedSize = expectedSize, sessionKey = token, isPartial = true,
+        )
     }
 
     fun hasWritableLibrary(): Boolean = try {
@@ -121,22 +157,59 @@ object ReceivedFiles {
 
 class IncomingFileSink(
     val file: File, val category: FileCategory, val fileName: String,
-    private val out: OutputStream, bytesWritten: Long = 0, nextSeq: Long = 0,
+    private val out: FileOutputStream,
+    bytesWritten: Long = 0, nextSeq: Long = 0,
+    private val expectedSize: Long,
+    private val sessionKey: String,
     private val isPartial: Boolean = false,
 ) {
     var bytesWritten: Long = bytesWritten; private set
     var nextSeq: Long = nextSeq; private set
+    private var closed = false
 
-    fun write(chunk: ByteArray) { out.write(chunk); bytesWritten += chunk.size }
+    fun write(chunk: ByteArray) {
+        check(!closed) { "incoming file sink is closed" }
+        out.write(chunk)
+        bytesWritten += chunk.size
+    }
+
     fun noteSeq(seq: Long) { nextSeq = seq + 1 }
 
+    private fun syncAndClose() {
+        if (closed) return
+        out.flush()
+        out.fd.sync()
+        out.close()
+        closed = true
+    }
+
+    private fun writeCheckpointMetadata() {
+        val meta = File(file.parentFile, "${file.name}.meta")
+        val temp = File(file.parentFile, "${file.name}.meta.tmp")
+        val content = "sessionKey=$sessionKey\nexpectedSize=$expectedSize\nnextSeq=$nextSeq\nbytes=$bytesWritten\n"
+        FileOutputStream(temp).use { stream ->
+            stream.write(content.toByteArray(Charsets.UTF_8))
+            stream.fd.sync()
+        }
+        if (meta.exists() && !meta.delete()) {
+            temp.delete()
+            throw java.io.IOException("could not replace resume checkpoint metadata")
+        }
+        if (!temp.renameTo(meta)) {
+            temp.copyTo(meta, overwrite = true)
+            temp.delete()
+        }
+    }
+
     fun finish(): SaveResult {
-        out.flush(); out.close()
+        syncAndClose()
         val finalFile = if (isPartial) {
             val target = File(file.parentFile, fileName)
             val dest = if (target.exists()) uniqueSibling(target) else target
             if (!file.renameTo(dest)) {
-                FileInputStream(file).use { i -> FileOutputStream(dest).use { o -> i.copyTo(o) } }
+                FileInputStream(file).use { i ->
+                    FileOutputStream(dest).use { o -> i.copyTo(o); o.fd.sync() }
+                }
                 file.delete()
             }
             File(file.parentFile, "${file.name}.meta").delete()
@@ -146,14 +219,23 @@ class IncomingFileSink(
     }
 
     fun parkForResume() {
-        try { out.flush(); out.close() } catch (_: Exception) {}
-        try { File(file.parentFile, "${file.name}.meta").writeText("nextSeq=$nextSeq\nbytes=$bytesWritten\n") } catch (_: Exception) {}
+        try {
+            syncAndClose()
+            if (bytesWritten > 0 && expectedSize >= bytesWritten) writeCheckpointMetadata()
+        } catch (_: Exception) {
+            // Keep partial bytes, but never advertise an unverified checkpoint.
+            File(file.parentFile, "${file.name}.meta").delete()
+        }
     }
 
     fun abort(keepPartial: Boolean = true) {
-        try { out.close() } catch (_: Exception) {}
         if (keepPartial && bytesWritten > 0) parkForResume()
-        else { file.delete(); File(file.parentFile, "${file.name}.meta").delete() }
+        else {
+            try { syncAndClose() } catch (_: Exception) {}
+            file.delete()
+            File(file.parentFile, "${file.name}.meta").delete()
+            File(file.parentFile, "${file.name}.meta.tmp").delete()
+        }
     }
 
     private fun uniqueSibling(base: File): File {
@@ -163,7 +245,9 @@ class IncomingFileSink(
         val ext = if (dot > 0) name.substring(dot) else ""
         var i = 1
         while (true) {
-            val c = File(dir, "$stem-$i$ext"); if (!c.exists()) return c; i++
+            val candidate = File(dir, "$stem-$i$ext")
+            if (!candidate.exists()) return candidate
+            i++
         }
     }
 }
