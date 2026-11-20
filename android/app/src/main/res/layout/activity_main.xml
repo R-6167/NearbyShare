@@ -24,7 +24,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Private, direct file sharing between nearby devices"
+            android:text="Move files. Not through hoops."
             android:textColor="?attr/colorOnSurface"
             android:textSize="14sp" />
 
@@ -138,7 +138,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="Ready. Start Host on one phone, then connect from the other."
+                    android:text="Ready when you are. Choose Send or Receive to begin."
                     android:textColor="?attr/colorOnSurface"
                     android:textIsSelectable="true"
                     android:textSize="14sp" />
