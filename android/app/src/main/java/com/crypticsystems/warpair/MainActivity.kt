@@ -35,6 +35,7 @@ import java.util.concurrent.atomic.AtomicReference
 class MainActivity : AppCompatActivity() {
     private var pickedFiles: List<PickedFile> = emptyList()
     private var scanAfterFilePick = false
+    @Volatile private var activeInvitationUri: String? = null
     private var lastPeers: List<NsdNearby.Peer> = emptyList()
     private lateinit var nsd: NsdNearby
     private var softAp: SoftApLink? = null
@@ -250,7 +251,8 @@ class MainActivity : AppCompatActivity() {
             val host = hostInput.text?.toString()?.ifBlank { null }
                 ?: localIpv4List().lineSequence().map { it.substringAfter(": ").trim() }.firstOrNull()
                 ?: "0.0.0.0"
-            val uri = qrPayloadInput.text?.toString()?.takeIf { it.startsWith("warpair://") }
+            val uri = activeInvitationUri
+                ?: qrPayloadInput.text?.toString()?.takeIf { it.startsWith("warpair://") }
                 ?: QrBootstrap.encodeUri(
                     QrBootstrap.Payload(
                         host = host,
@@ -557,11 +559,33 @@ class MainActivity : AppCompatActivity() {
                         val active = MultiTransportReceiver(acceptors)
                         receiver = active
                         activeReceiver.set(active)
+                        val lanEndpoints = localIpv4Endpoints(listenPort)
+                        val invitationRoutes = linkedSetOf<String>().apply {
+                            if (lanEndpoints.isNotEmpty()) add("lan")
+                            if (wifiDirectGroup != null) add("wifi_direct")
+                            if (bluetoothAdapter != null) add("bluetooth")
+                        }
+                        val invitationUri = if (invitationRoutes.isNotEmpty()) {
+                            QrBootstrap.encodeInvitation(
+                                QrBootstrap.createInvitation(
+                                    deviceName = name,
+                                    routes = invitationRoutes,
+                                    lanEndpoints = lanEndpoints,
+                                    bluetoothServiceUuid = if (bluetoothAdapter != null) BluetoothLink.SERVICE_UUID.toString() else null,
+                                ),
+                            )
+                        } else null
+                        activeInvitationUri = invitationUri
                         mainHandler.post {
-                            val routes = mutableListOf("Wi-Fi / LAN / SoftAP")
-                            if (wifiDirectGroup != null) routes += "Wi-Fi Direct"
-                            if (bluetoothAdapter != null) routes += "Bluetooth"
-                            status.text = "Waiting for a peer over ${routes.joinToString(" / ")}…"
+                            val routeLabels = mutableListOf<String>()
+                            if (lanEndpoints.isNotEmpty()) routeLabels += "LAN"
+                            if (wifiDirectGroup != null) routeLabels += "Wi-Fi Direct"
+                            if (bluetoothAdapter != null) routeLabels += "Bluetooth"
+                            status.text = "Waiting for a peer over ${routeLabels.joinToString(" / ")}…"
+                            if (invitationUri != null) {
+                                qrPayloadInput.setText(invitationUri)
+                                showQrDialog(QrBootstrap.toBitmap(invitationUri, 640), invitationUri)
+                            }
                         }
 
                         // Listener setup/accept failures are fatal for this host session. Once a
@@ -596,6 +620,7 @@ class MainActivity : AppCompatActivity() {
                             receiver?.close()
                             receiver = null
                             activeReceiver.set(null)
+                            activeInvitationUri = null
                             wifiDirectGroup?.close()
                             wifiDirectGroup = null
                             if (bluetooth === bluetoothAdapter) bluetooth = null
@@ -607,6 +632,7 @@ class MainActivity : AppCompatActivity() {
                 } finally {
                     receiver?.close()
                     activeReceiver.set(null)
+                    activeInvitationUri = null
                     wifiDirectGroup?.close()
                     wifiDirectGroup = null
                     if (bluetooth === bluetoothAdapter) bluetooth = null
@@ -948,6 +974,15 @@ class MainActivity : AppCompatActivity() {
                 activeTransportCancel.set(null)
             }
         }.start()
+    }
+
+    private fun localIpv4Endpoints(port: Int): List<QrBootstrap.Endpoint> {
+        return localIpv4List().lineSequence()
+            .mapNotNull { line -> line.substringAfter(": ", "").trim().takeIf { it.isNotBlank() && it != "(none)" } }
+            .distinct()
+            .take(4)
+            .map { QrBootstrap.Endpoint(it, port) }
+            .toList()
     }
 
     private fun localIpv4List(): String {
