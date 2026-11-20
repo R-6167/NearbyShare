@@ -459,4 +459,23 @@ mod transfer_metadata_tests {
         assert_eq!(file_id, 1);
         assert_eq!(hash, expected);
     }
+    #[test]
+    fn batch_complete_parser_preserves_batch_id_and_file_count() {
+        let message = Message::BatchComplete {
+            session_id: "batch-abc".into(),
+            file_count: 4,
+        }.encode();
+        let mut sid = [0u8; 64];
+        let mut sid_len = 0;
+        let mut file_count = 0;
+        let rc = nearby_c_msg_parse_batch_complete(
+            message.as_ptr(), message.len(), sid.as_mut_ptr(), sid.len(),
+            &mut sid_len, &mut file_count,
+        );
+        assert_eq!(rc, 0);
+        assert_eq!(&sid[..sid_len as usize], b"batch-abc");
+        assert_eq!(file_count, 4);
+        assert_eq!(nearby_c_msg_tag(message.as_ptr(), message.len()), 9);
+    }
+
 }
