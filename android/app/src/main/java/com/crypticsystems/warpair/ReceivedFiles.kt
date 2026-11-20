@@ -5,6 +5,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.OpenableColumns
+import com.crypticsystems.warpair.core.NearbyCore
+import java.util.Base64
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -106,6 +108,94 @@ object ReceivedFiles {
             nextSeq != bytes / TransferFileCheckpoint.DEFAULT_CHUNK_SIZE
         ) return null
         return PartialInfo(safe, expectedSize, bytes, nextSeq, partial, sessionId)
+    }
+
+    /**
+     * Returns a previously committed file only when its persisted BLAKE3 digest
+     * still matches. This prevents a reconnect from retransmitting a file that
+     * was already committed, while refusing stale or externally modified files.
+     */
+    fun findCompleted(fileName: String, expectedSize: Long, sessionId: String): SaveResult? {
+        val safe = sanitizeFileName(fileName)
+        val category = categoryFor(safe)
+        val dir = categoryDir(category)
+        val token = partialToken(sessionId)
+        val meta = File(dir, ".warpair-$token.complete")
+        if (!meta.isFile) return null
+        val values = meta.readLines().mapNotNull { line ->
+            val split = line.indexOf('=')
+            if (split <= 0) null else line.substring(0, split) to line.substring(split + 1)
+        }.toMap()
+        if (values["sessionKey"] != token) return null
+        if (values["expectedSize"]?.toLongOrNull() != expectedSize) return null
+        val originalName = decodeManifestName(values["originalName"] ?: return null) ?: return null
+        if (originalName != safe) return null
+        val savedName = decodeManifestName(values["savedName"] ?: return null) ?: return null
+        if (sanitizeFileName(savedName) != savedName) return null
+        val completed = File(dir, savedName)
+        if (completed.canonicalFile.parentFile != dir.canonicalFile) return null
+        if (!completed.isFile || completed.length() != expectedSize) return null
+        val expectedHash = values["blake3"] ?: return null
+        if (hashFile(completed) != expectedHash) return null
+        return SaveResult(completed.absolutePath, category, completed.name, expectedSize)
+    }
+
+    /** Persist completion only after the receiver has verified and committed the file. */
+    fun recordCompleted(
+        sessionId: String,
+        originalFileName: String,
+        expectedSize: Long,
+        save: SaveResult,
+        verifiedHash: ByteArray,
+    ) {
+        require(verifiedHash.size == 32) { "completed file hash must be BLAKE3-256" }
+        val safe = sanitizeFileName(originalFileName)
+        val dir = categoryDir(categoryFor(safe)).canonicalFile
+        val completed = File(save.appPath).canonicalFile
+        require(completed.parentFile == dir && completed.isFile && completed.length() == expectedSize) {
+            "completed file path or size does not match its transfer"
+        }
+        val token = partialToken(sessionId)
+        val meta = File(dir, ".warpair-$token.complete")
+        val temp = File(dir, ".warpair-$token.complete.tmp")
+        val hash = verifiedHash.joinToString("") { "%02x".format(it) }
+        val content = "sessionKey=$token\noriginalName=${encodeManifestName(safe)}\nsavedName=${encodeManifestName(completed.name)}\nexpectedSize=$expectedSize\nblake3=$hash\n"
+        FileOutputStream(temp).use { stream ->
+            stream.write(content.toByteArray(Charsets.UTF_8))
+            stream.fd.sync()
+        }
+        if (meta.exists() && !meta.delete()) {
+            temp.delete()
+            throw java.io.IOException("could not replace completed-file manifest")
+        }
+        if (!temp.renameTo(meta)) {
+            temp.copyTo(meta, overwrite = true)
+            temp.delete()
+        }
+    }
+
+    private fun encodeManifestName(value: String): String =
+        Base64.getUrlEncoder().withoutPadding().encodeToString(value.toByteArray(Charsets.UTF_8))
+
+    private fun decodeManifestName(value: String): String? = try {
+        String(Base64.getUrlDecoder().decode(value), Charsets.UTF_8)
+    } catch (_: IllegalArgumentException) { null }
+
+    private fun hashFile(file: File): String {
+        val hasher = NearbyCore.newHasher()
+        try {
+            file.inputStream().buffered().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    if (count > 0) hasher.update(buffer, 0, count)
+                }
+            }
+            return hasher.finalizeHash().joinToString("") { "%02x".format(it) }
+        } finally {
+            hasher.close()
+        }
     }
 
     fun openIncoming(
