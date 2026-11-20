@@ -602,9 +602,19 @@ class MainActivity : AppCompatActivity() {
                         // listener above. Do not bind a second socket on the same port.
                         wifiDirectGroup = if (wifiDirect != null && hasWifiDirectPermission()) {
                             try {
-                                WifiDirectGroupSession(wifiDirect!!) { message ->
+                                val groupSession = WifiDirectGroupSession(wifiDirect!!) { message ->
                                     mainHandler.post { status.text = message }
-                                }.also { it.start() }
+                                }
+                                groupSession.start()
+                                if (groupSession.awaitGroupCreation()) {
+                                    groupSession
+                                } else {
+                                    groupSession.close()
+                                    mainHandler.post {
+                                        status.text = "Wi-Fi Direct group was not created. LAN and Bluetooth remain available."
+                                    }
+                                    null
+                                }
                             } catch (groupFailure: Throwable) {
                                 mainHandler.post {
                                     status.text = "Wi-Fi Direct group could not start (${groupFailure.message}); LAN and Bluetooth remain available."
