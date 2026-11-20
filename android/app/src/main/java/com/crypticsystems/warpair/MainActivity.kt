@@ -94,11 +94,10 @@ class MainActivity : AppCompatActivity() {
     private val requestBluetoothPermissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { grants ->
-        if (grants.values.all { it }) {
-            startBluetoothDiscovery()
+        findViewById<TextView>(R.id.statusText)?.text = if (grants.values.all { it }) {
+            "Bluetooth permissions granted. Retry the Bluetooth action."
         } else {
-            findViewById<TextView>(R.id.statusText)?.text =
-                "Bluetooth Nearby devices permission is required. Allow it and retry."
+            "Bluetooth Nearby devices permission is required. Allow it and retry."
         }
     }
 
