@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicReference
 class MainActivity : AppCompatActivity() {
     private var pickedFiles: List<PickedFile> = emptyList()
     private var scanAfterFilePick = false
+    private var pendingScannedQr: String? = null
     @Volatile private var activeInvitationUri: String? = null
     @Volatile private var pendingQrPeerName: String? = null
     @Volatile private var pendingQrAutoJoin = false
@@ -77,7 +78,12 @@ class MainActivity : AppCompatActivity() {
         pickedFiles = loaded
         findViewById<TextView>(R.id.pickedFileText).text =
             loaded.joinToString("\n", prefix = "${loaded.size} file(s):\n") { "• ${it.displayName}" }
-        if (scanAfterFilePick) {
+        val pendingQr = pendingScannedQr
+        if (pendingQr != null) {
+            pendingScannedQr = null
+            scanAfterFilePick = false
+            applyScannedQr(pendingQr)
+        } else if (scanAfterFilePick) {
             scanAfterFilePick = false
             val options = ScanOptions().apply {
                 setDesiredBarcodeFormats(ScanOptions.QR_CODE)
@@ -736,6 +742,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyScannedQr(raw: String) {
         try {
+            pendingScannedQr = if (pickedFiles.isEmpty()) raw else null
             findViewById<EditText>(R.id.qrPayloadInput).setText(raw)
             if (raw.trim().startsWith("warpair://invite?", ignoreCase = true)) {
                 val invitation = QrBootstrap.parseInvitation(raw)
@@ -803,6 +810,7 @@ class MainActivity : AppCompatActivity() {
             if (pickedFiles.isNotEmpty()) findViewById<Button>(R.id.joinButton).performClick()
             else findViewById<TextView>(R.id.statusText).append("\\nChoose files, then tap Send.")
         } catch (t: Throwable) {
+            pendingScannedQr = null
             findViewById<TextView>(R.id.statusText).text =
                 "This QR code is not a valid WarPair connection code: ${t.message}"
         }
