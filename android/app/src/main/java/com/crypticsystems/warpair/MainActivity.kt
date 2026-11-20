@@ -603,8 +603,8 @@ class MainActivity : AppCompatActivity() {
                                     lanEndpoints = lanEndpoints,
                                     bluetoothServiceUuid = if ("bluetooth" in invitationRoutes) BluetoothLink.SERVICE_UUID.toString() else null,
                                     bluetoothDeviceName = bluetoothAdapter?.localDeviceName()?.takeIf { "bluetooth" in invitationRoutes },
-                                    wifiSsid = activeSoftApCredentials?.ssid,
-                                    wifiPassword = activeSoftApCredentials?.password,
+                                    wifiSsid = activeSoftApCredentials?.takeIf { it.password.isNotBlank() }?.ssid,
+                                    wifiPassword = activeSoftApCredentials?.password?.takeIf { it.isNotBlank() },
                                 ),
                             )
                         } else null
