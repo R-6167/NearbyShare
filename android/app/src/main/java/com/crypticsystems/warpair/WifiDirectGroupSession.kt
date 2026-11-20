@@ -16,7 +16,6 @@ class WifiDirectGroupSession(
 ) : Closeable {
     private val closed = AtomicBoolean(false)
     private val started = AtomicBoolean(false)
-    @Volatile private var groupFormed = false
     @Volatile private var groupCreated = false
     @Volatile private var observer: Closeable? = null
 
@@ -26,7 +25,6 @@ class WifiDirectGroupSession(
 
         observer = adapter.addConnectionObserver { connection ->
             if (connection.groupFormed && !connection.groupOwnerHost.isNullOrBlank()) {
-                groupFormed = true
                 statusCallback(
                     "Wi-Fi Direct group ready. The shared receiver is accepting P2P, LAN, SoftAP and Bluetooth connections.",
                 )
