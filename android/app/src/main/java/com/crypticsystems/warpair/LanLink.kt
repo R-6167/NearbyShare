@@ -237,6 +237,7 @@ object LanLink {
             val batchId = TransferBatchIdentity.from(files)
             sendSealed(session, output, NearbyCore.encodeBatchStart(batchId, files.size))
             val ready = NearbyCore.parseResponse(readSealed(session, input))
+            require(ready.sessionId == batchId) { "batch readiness response belongs to a different logical batch" }
             require(ready.accepted && ready.reason == "batch_ready") {
                 "receiver did not acknowledge the logical batch declaration"
             }
@@ -273,6 +274,7 @@ object LanLink {
         val respPlain = readSealed(session, input)
         if (NearbyCore.msgTag(respPlain) == 8) return "CANCELLED by peer"
         val response = NearbyCore.parseResponse(respPlain)
+        require(response.sessionId == sessionId) { "file response belongs to a different transfer session" }
         if (!response.accepted) return "REJECTED ${file.fileName}"
         if (response.reason == "already_complete") {
             onFileCompleted?.invoke(file)
@@ -308,6 +310,7 @@ object LanLink {
             sendSealed(session, output, NearbyCore.encodeChunk(sessionId, 1, seq, ByteArray(0), true))
             sendSealed(session, output, NearbyCore.encodeComplete(sessionId, hasher.finalizeHash()))
             val receipt = NearbyCore.parseResponse(readSealed(session, input))
+            require(receipt.sessionId == sessionId) { "completion receipt belongs to a different transfer session" }
             TransferFileReceipt.requireAccepted(sessionId, receipt.accepted, receipt.reason)
             onFileCompleted?.invoke(file)
             return "OK ${file.fileName} bytes=$sent skip=$skip receiver_confirmed"

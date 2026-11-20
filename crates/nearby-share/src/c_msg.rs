@@ -266,38 +266,36 @@ pub extern "C" fn nearby_c_msg_parse_offer(
     0
 }
 
-/// Parse Response. accepted_out, optional reason into reason_out.
+/// Parse Response, preserving the session id, acceptance flag and optional reason.
 #[no_mangle]
 pub extern "C" fn nearby_c_msg_parse_response(
     data_ptr: *const u8,
     data_len: usize,
     accepted_out: *mut i32,
+    sid_out: *mut u8,
+    sid_cap: usize,
+    sid_len_out: *mut i32,
     reason_out: *mut u8,
     reason_cap: usize,
     reason_len_out: *mut i32,
 ) -> i32 {
-    if data_ptr.is_null() || accepted_out.is_null() {
+    if data_ptr.is_null() || accepted_out.is_null() || sid_len_out.is_null() {
         return -1;
     }
     let data = unsafe { slice::from_raw_parts(data_ptr, data_len) };
     match Message::decode(data) {
-        Ok(Message::Response {
-            accepted,
-            reason,
-            ..
-        }) => {
+        Ok(Message::Response { session_id, accepted, reason }) => {
+            let sid_len = write_bytes(sid_out, sid_cap, session_id.as_bytes());
+            if sid_len < 0 { return sid_len; }
             unsafe {
                 *accepted_out = if accepted { 1 } else { 0 };
+                *sid_len_out = sid_len;
             }
             if !reason_len_out.is_null() {
-                let r = reason.unwrap_or_default();
-                let n = write_bytes(reason_out, reason_cap, r.as_bytes());
-                if n < 0 {
-                    return n;
-                }
-                unsafe {
-                    *reason_len_out = n;
-                }
+                let value = reason.unwrap_or_default();
+                let n = write_bytes(reason_out, reason_cap, value.as_bytes());
+                if n < 0 { return n; }
+                unsafe { *reason_len_out = n; }
             }
             0
         }
@@ -455,6 +453,29 @@ pub extern "C" fn nearby_c_hash(data_ptr: *const u8, data_len: usize, out: *mut 
 #[cfg(test)]
 mod transfer_metadata_tests {
     use super::*;
+
+    #[test]
+    fn response_parser_preserves_session_id_acceptance_and_reason() {
+        let message = Message::Response {
+            session_id: "file-session-42".into(),
+            accepted: true,
+            reason: Some("resume_bytes:65536".into()),
+        }.encode();
+        let mut sid = [0u8; 64];
+        let mut sid_len = 0;
+        let mut accepted = 0;
+        let mut reason = [0u8; 64];
+        let mut reason_len = 0;
+        let rc = nearby_c_msg_parse_response(
+            message.as_ptr(), message.len(), &mut accepted,
+            sid.as_mut_ptr(), sid.len(), &mut sid_len,
+            reason.as_mut_ptr(), reason.len(), &mut reason_len,
+        );
+        assert_eq!(rc, 0);
+        assert_eq!(&sid[..sid_len as usize], b"file-session-42");
+        assert_eq!(accepted, 1);
+        assert_eq!(&reason[..reason_len as usize], b"resume_bytes:65536");
+    }
 
     #[test]
     fn chunk_parser_preserves_session_file_and_sequence_metadata() {
