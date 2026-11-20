@@ -956,7 +956,9 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             override fun onFinished() {
-                mainHandler.post { status.text = "Bluetooth scan finished. Select a device; Android may ask you to pair when connecting." }
+                if (!autoJoinTriggered.get()) {
+                    mainHandler.post { status.text = "Bluetooth scan finished. Select a device; Android may ask you to pair when connecting." }
+                }
             }
             override fun onError(message: String) {
                 mainHandler.post { status.text = message }
