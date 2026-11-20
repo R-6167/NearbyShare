@@ -45,6 +45,8 @@ object QrBootstrap {
         val lanEndpoints: List<Endpoint>,
         val bluetoothServiceUuid: String? = null,
         val bluetoothDeviceName: String? = null,
+        val wifiSsid: String? = null,
+        val wifiPassword: String? = null,
     ) {
         fun isExpired(nowEpochSeconds: Long = System.currentTimeMillis() / 1000L): Boolean =
             expiresAtEpochSeconds <= nowEpochSeconds
@@ -56,6 +58,8 @@ object QrBootstrap {
         lanEndpoints: List<Endpoint> = emptyList(),
         bluetoothServiceUuid: String? = null,
         bluetoothDeviceName: String? = null,
+        wifiSsid: String? = null,
+        wifiPassword: String? = null,
         nowEpochSeconds: Long = System.currentTimeMillis() / 1000L,
         ttlSeconds: Long = DEFAULT_INVITATION_TTL_SECONDS,
     ): Invitation {
@@ -70,6 +74,7 @@ object QrBootstrap {
             "Bluetooth route requires its WarPair service UUID and discoverable device name."
         }
         require(lanEndpoints.size <= MAX_LAN_ENDPOINTS)
+        require(wifiSsid.isNullOrBlank() == wifiPassword.isNullOrBlank()) { "SoftAP SSID and password must be provided together." }
         val random = ByteArray(16).also(secureRandom::nextBytes)
         val sessionId = random.joinToString("") { "%02x".format(it) }
         return Invitation(
@@ -81,6 +86,8 @@ object QrBootstrap {
             lanEndpoints = lanEndpoints.distinct(),
             bluetoothServiceUuid = bluetoothServiceUuid,
             bluetoothDeviceName = bluetoothDeviceName?.trim()?.take(64),
+            wifiSsid = wifiSsid?.takeIf { it.isNotBlank() }?.take(32),
+            wifiPassword = wifiPassword?.takeIf { it.isNotBlank() }?.take(63),
         )
     }
 
@@ -97,6 +104,8 @@ object QrBootstrap {
             }
             invitation.bluetoothServiceUuid?.let { append("&bt=").append(enc(it)) }
             invitation.bluetoothDeviceName?.let { append("&btname=").append(enc(it)) }
+            invitation.wifiSsid?.let { append("&ssid=").append(enc(it)) }
+            invitation.wifiPassword?.let { append("&pass=").append(enc(it)) }
         }
         return "warpair://invite?$query"
     }
@@ -129,6 +138,8 @@ object QrBootstrap {
             lanEndpoints = endpoints,
             bluetoothServiceUuid = map["bt"]?.takeIf { it.isNotBlank() },
             bluetoothDeviceName = map["btname"]?.takeIf { it.isNotBlank() },
+            wifiSsid = map["ssid"]?.takeIf { it.isNotBlank() },
+            wifiPassword = map["pass"]?.takeIf { it.isNotBlank() },
         )
         validateInvitation(invitation, nowEpochSeconds, checkExpiry = true)
         return invitation
@@ -197,6 +208,9 @@ object QrBootstrap {
             "Invitation has no supported connection routes."
         }
         require(invitation.lanEndpoints.size <= MAX_LAN_ENDPOINTS)
+        require(invitation.wifiSsid.isNullOrBlank() == invitation.wifiPassword.isNullOrBlank()) {
+            "Invitation SoftAP SSID and password are incomplete."
+        }
         require(("lan" in invitation.routes) == invitation.lanEndpoints.isNotEmpty()) {
             "Invitation LAN route information is incomplete."
         }
