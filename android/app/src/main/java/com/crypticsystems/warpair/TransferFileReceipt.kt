@@ -1,6 +1,7 @@
 package com.crypticsystems.warpair
 
 import java.io.IOException
+import java.security.MessageDigest
 
 /**
  * Correlates a sender's completed-file message with the receiver's durable
@@ -11,7 +12,10 @@ object TransferFileReceipt {
 
     fun reason(fileSessionId: String): String {
         require(fileSessionId.isNotBlank()) { "file session id is required" }
-        return PREFIX + fileSessionId
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(fileSessionId.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        return PREFIX + digest
     }
 
     @Throws(IOException::class)
