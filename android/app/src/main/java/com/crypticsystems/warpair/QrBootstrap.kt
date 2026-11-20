@@ -75,8 +75,10 @@ object QrBootstrap {
         }
         require(lanEndpoints.size <= MAX_LAN_ENDPOINTS)
         require(wifiSsid.isNullOrBlank() == wifiPassword.isNullOrBlank()) { "SoftAP SSID and password must be provided together." }
+        require(wifiSsid == null || wifiSsid.length <= 32) { "SoftAP SSID is too long." }
+        require(wifiPassword == null || wifiPassword.length <= 63) { "SoftAP password is too long." }
         val random = ByteArray(16).also(secureRandom::nextBytes)
-        val sessionId = random.joinToString("") { "%02x".format(it) }
+        val sessionId = random.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
         return Invitation(
             version = INVITATION_VERSION,
             sessionId = sessionId,
@@ -86,8 +88,8 @@ object QrBootstrap {
             lanEndpoints = lanEndpoints.distinct(),
             bluetoothServiceUuid = bluetoothServiceUuid,
             bluetoothDeviceName = bluetoothDeviceName?.trim()?.take(64),
-            wifiSsid = wifiSsid?.takeIf { it.isNotBlank() }?.take(32),
-            wifiPassword = wifiPassword?.takeIf { it.isNotBlank() }?.take(63),
+            wifiSsid = wifiSsid?.takeIf { it.isNotBlank() },
+            wifiPassword = wifiPassword?.takeIf { it.isNotBlank() },
         )
     }
 
@@ -211,6 +213,8 @@ object QrBootstrap {
         require(invitation.wifiSsid.isNullOrBlank() == invitation.wifiPassword.isNullOrBlank()) {
             "Invitation SoftAP SSID and password are incomplete."
         }
+        require(invitation.wifiSsid == null || invitation.wifiSsid.length <= 32) { "Invitation SoftAP SSID is too long." }
+        require(invitation.wifiPassword == null || invitation.wifiPassword.length <= 63) { "Invitation SoftAP password is too long." }
         require(("lan" in invitation.routes) == invitation.lanEndpoints.isNotEmpty()) {
             "Invitation LAN route information is incomplete."
         }
