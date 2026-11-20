@@ -1,6 +1,8 @@
 package com.crypticsystems.warpair
 
 import java.io.Closeable
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -17,6 +19,8 @@ class WifiDirectGroupSession(
     private val closed = AtomicBoolean(false)
     private val started = AtomicBoolean(false)
     @Volatile private var groupCreated = false
+    @Volatile private var groupCreationSucceeded = false
+    private val groupAttemptFinished = CountDownLatch(1)
     @Volatile private var observer: Closeable? = null
 
     fun start() {
@@ -31,18 +35,35 @@ class WifiDirectGroupSession(
             }
         }
         statusCallback("Starting Wi-Fi Direct group negotiation alongside LAN and Bluetooth listening…")
-        adapter.createGroup { failure ->
-            if (failure != null && !closed.get()) {
-                statusCallback("Wi-Fi Direct unavailable for this receive session ($failure). LAN and Bluetooth remain active.")
-            } else if (failure == null) {
+        adapter.createGroup(
+            onGroupCreated = {
                 groupCreated = true
+                groupCreationSucceeded = true
+                groupAttemptFinished.countDown()
                 if (closed.get()) adapter.removeGroup() else adapter.requestConnection()
-            }
+            },
+            onGroupFailure = { failure ->
+                groupAttemptFinished.countDown()
+                if (!closed.get()) {
+                    statusCallback("Wi-Fi Direct unavailable for this receive session ($failure). LAN and Bluetooth remain active.")
+                }
+            },
+        )
+    }
+
+    fun awaitGroupCreation(timeoutMs: Long = 8_000): Boolean {
+        if (!started.get()) return false
+        return try {
+            groupAttemptFinished.await(timeoutMs, TimeUnit.MILLISECONDS) && groupCreationSucceeded
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
         }
     }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        groupAttemptFinished.countDown()
         try { observer?.close() } catch (_: Throwable) {}
         observer = null
         if (groupCreated) adapter.removeGroup()
