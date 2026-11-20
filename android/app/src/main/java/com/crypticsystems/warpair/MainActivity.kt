@@ -591,6 +591,7 @@ class MainActivity : AppCompatActivity() {
                                     routes = invitationRoutes,
                                     lanEndpoints = lanEndpoints,
                                     bluetoothServiceUuid = if (bluetoothAdapter != null) BluetoothLink.SERVICE_UUID.toString() else null,
+                                    bluetoothDeviceName = bluetoothAdapter?.localDeviceName(),
                                 ),
                             )
                         } else null
@@ -708,7 +709,7 @@ class MainActivity : AppCompatActivity() {
             findViewById<EditText>(R.id.qrPayloadInput).setText(raw)
             if (raw.trim().startsWith("warpair://invite?", ignoreCase = true)) {
                 val invitation = QrBootstrap.parseInvitation(raw)
-                pendingQrPeerName = invitation.deviceName
+                pendingQrPeerName = invitation.bluetoothDeviceName ?: invitation.deviceName
                 pendingQrAutoJoin = pickedFiles.isNotEmpty()
                 val lan = invitation.lanEndpoints.firstOrNull()
                 if (lan != null) {
@@ -727,7 +728,7 @@ class MainActivity : AppCompatActivity() {
                 } else if ("bluetooth" in invitation.routes && ensureBluetoothPermissions()) {
                     findViewById<TextView>(R.id.statusText).text =
                         "QR found ${invitation.deviceName}. Finding its Bluetooth route…"
-                    startBluetoothDiscovery(invitation.deviceName, autoConnect = pickedFiles.isNotEmpty())
+                    startBluetoothDiscovery(invitation.bluetoothDeviceName ?: invitation.deviceName, autoConnect = pickedFiles.isNotEmpty())
                 } else {
                     findViewById<TextView>(R.id.statusText).text =
                         "This invitation has no currently usable route. Ask the receiver to refresh its QR."
