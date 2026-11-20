@@ -582,7 +582,7 @@ class MainActivity : AppCompatActivity() {
                         val invitationRoutes = linkedSetOf<String>().apply {
                             if (lanEndpoints.isNotEmpty()) add("lan")
                             if (wifiDirectGroup != null) add("wifi_direct")
-                            if (bluetoothAdapter != null) add("bluetooth")
+                            if (bluetoothAdapter?.localDeviceName()?.isNotBlank() == true) add("bluetooth")
                         }
                         val invitationUri = if (invitationRoutes.isNotEmpty()) {
                             QrBootstrap.encodeInvitation(
@@ -590,8 +590,8 @@ class MainActivity : AppCompatActivity() {
                                     deviceName = name,
                                     routes = invitationRoutes,
                                     lanEndpoints = lanEndpoints,
-                                    bluetoothServiceUuid = if (bluetoothAdapter != null) BluetoothLink.SERVICE_UUID.toString() else null,
-                                    bluetoothDeviceName = bluetoothAdapter?.localDeviceName(),
+                                    bluetoothServiceUuid = if ("bluetooth" in invitationRoutes) BluetoothLink.SERVICE_UUID.toString() else null,
+                                    bluetoothDeviceName = bluetoothAdapter?.localDeviceName()?.takeIf { "bluetooth" in invitationRoutes },
                                 ),
                             )
                         } else null
