@@ -26,7 +26,7 @@ See also [WARPAIR.md](WARPAIR.md) for packaging and SoftAP / QR notes.
 | Core | Rust workspace crate `nearby-share` |
 | FFI | C ABI (JNA) + UniFFI path |
 | Android | Kotlin app `com.crypticsystems.warpair` |
-| Discovery | mDNS `_warpair._tcp`, SoftAP + QR; Wi-Fi Direct / Bluetooth discovery planned |
+| Discovery | mDNS `_warpair._tcp`, SoftAP + QR, Wi-Fi Direct and Bluetooth discovery |
 
 ## Protocol sketch
 
@@ -46,6 +46,7 @@ A transport reconnect creates a fresh authenticated channel and PIN handshake. I
 ## Implementation status
 
 - Implemented: crypto, session, codec, Android LAN TCP, SoftAP + QR bootstrap, mDNS discovery, chunk integrity, partial-file resume.
-- Added in Phase 3 foundation: transport ordering policy and deterministic failover sequence with unit tests.
-- Implemented: native Wi-Fi Direct adapter and secure Bluetooth Classic RFCOMM socket adapter for already-paired devices. Bluetooth peer discovery and host/join controls are now wired into the Android UI; Android system pairing is used when a selected device is not already bonded. Automatic end-to-end failover across radios remains pending.
-- Implemented in this phase: native Wi-Fi Direct discovery, peer listing, group create/connect/remove, connection-info reporting and group-owner TCP socket setup; Wi-Fi Direct UI and LanLink orchestration; Bluetooth Classic secure RFCOMM host/connect adapter for bonded peers. Automatic cross-transport recovery and device-level interruption/resume tests remain next. Bluetooth discovery and transfer controls are implemented, but require two-phone validation across Android versions.
+- Added in Phase 3 foundation: transport ordering policy, immutable transfer recovery snapshots and deterministic failover sequence with unit tests.
+- Added in this phase: a tested transport-failover coordinator that carries forward only validated durable checkpoints, prevents transfer identity/file-list changes, and stops rather than switching routes when the user cancels. Android transport connection adapters and live transfer callbacks are not yet wired into this coordinator; end-to-end automatic switching remains the next integration step.
+- Implemented: native Wi-Fi Direct adapter and secure Bluetooth Classic RFCOMM socket adapter for already-paired devices. Bluetooth peer discovery and host/join controls are now wired into the Android UI; Android system pairing is used when a selected device is not already bonded. The transport-independent recovery coordinator is implemented; Android end-to-end automatic failover across radios remains pending.
+- Implemented in this phase: native Wi-Fi Direct discovery, peer listing, group create/connect/remove, connection-info reporting and group-owner TCP socket setup; Wi-Fi Direct UI and LanLink orchestration; Bluetooth Classic secure RFCOMM host/connect adapter for bonded peers. Wiring the recovery coordinator to Android connection adapters and device-level interruption/resume tests remain next. Bluetooth discovery and transfer controls are implemented, but require two-phone validation across Android versions.
