@@ -144,6 +144,21 @@ pub extern "C" fn nearby_c_msg_encode_complete(
 }
 
 #[no_mangle]
+pub extern "C" fn nearby_c_msg_encode_batch_start(
+    session_id_ptr: *const u8,
+    session_id_len: usize,
+    file_count: u32,
+    out: *mut u8,
+    out_len: usize,
+) -> i32 {
+    let Some(session_id) = read_str(session_id_ptr, session_id_len) else {
+        return -1;
+    };
+    let msg = Message::BatchStart { session_id, file_count };
+    write_bytes(out, out_len, &msg.encode())
+}
+
+#[no_mangle]
 pub extern "C" fn nearby_c_msg_encode_batch_complete(
     session_id_ptr: *const u8,
     session_id_len: usize,
@@ -198,6 +213,7 @@ pub extern "C" fn nearby_c_msg_tag(data_ptr: *const u8, data_len: usize) -> i32 
         Ok(Message::Complete { .. }) => 7,
         Ok(Message::Cancel { .. }) => 8,
         Ok(Message::BatchComplete { .. }) => 9,
+        Ok(Message::BatchStart { .. }) => 10,
         Err(_) => -4,
     }
 }
@@ -358,6 +374,35 @@ pub extern "C" fn nearby_c_msg_parse_complete(
     }
 }
 
+/// Parse the start-of-batch marker.
+#[no_mangle]
+pub extern "C" fn nearby_c_msg_parse_batch_start(
+    data_ptr: *const u8,
+    data_len: usize,
+    sid_out: *mut u8,
+    sid_cap: usize,
+    sid_len_out: *mut i32,
+    file_count_out: *mut u32,
+) -> i32 {
+    if data_ptr.is_null() || sid_len_out.is_null() || file_count_out.is_null() {
+        return -1;
+    }
+    let data = unsafe { slice::from_raw_parts(data_ptr, data_len) };
+    match Message::decode(data) {
+        Ok(Message::BatchStart { session_id, file_count }) => {
+            let n = write_bytes(sid_out, sid_cap, session_id.as_bytes());
+            if n < 0 { return n; }
+            unsafe {
+                *sid_len_out = n;
+                *file_count_out = file_count;
+            }
+            0
+        }
+        Ok(_) => -5,
+        Err(_) => -4,
+    }
+}
+
 /// Parse the explicit end-of-batch marker.
 #[no_mangle]
 pub extern "C" fn nearby_c_msg_parse_batch_complete(
@@ -459,6 +504,25 @@ mod transfer_metadata_tests {
         assert_eq!(file_id, 1);
         assert_eq!(hash, expected);
     }
+    #[test]
+    fn batch_start_parser_preserves_batch_id_and_file_count() {
+        let message = Message::BatchStart {
+            session_id: "batch-start-abc".into(),
+            file_count: 2,
+        }.encode();
+        let mut sid = [0u8; 64];
+        let mut sid_len = 0;
+        let mut file_count = 0;
+        let rc = nearby_c_msg_parse_batch_start(
+            message.as_ptr(), message.len(), sid.as_mut_ptr(), sid.len(),
+            &mut sid_len, &mut file_count,
+        );
+        assert_eq!(rc, 0);
+        assert_eq!(&sid[..sid_len as usize], b"batch-start-abc");
+        assert_eq!(file_count, 2);
+        assert_eq!(nearby_c_msg_tag(message.as_ptr(), message.len()), 10);
+    }
+
     #[test]
     fn batch_complete_parser_preserves_batch_id_and_file_count() {
         let message = Message::BatchComplete {
