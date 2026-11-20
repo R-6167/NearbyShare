@@ -18,6 +18,8 @@ class QrBootstrapInvitationTest {
             ),
             bluetoothServiceUuid = "a8c2f4d0-6e5b-4d91-9a3f-575250414952",
             bluetoothDeviceName = "Moses Phone",
+            wifiSsid = "WarPair-Guest",
+            wifiPassword = "temporary-pass",
             nowEpochSeconds = now,
         )
 
@@ -34,6 +36,8 @@ class QrBootstrapInvitationTest {
         assertEquals(invitation.lanEndpoints, decoded.lanEndpoints)
         assertEquals(invitation.bluetoothServiceUuid, decoded.bluetoothServiceUuid)
         assertEquals(invitation.bluetoothDeviceName, decoded.bluetoothDeviceName)
+        assertEquals(invitation.wifiSsid, decoded.wifiSsid)
+        assertEquals(invitation.wifiPassword, decoded.wifiPassword)
     }
 
     @Test
@@ -55,6 +59,9 @@ class QrBootstrapInvitationTest {
         }
         assertThrows(IllegalArgumentException::class.java) {
             QrBootstrap.createInvitation("Phone", setOf("infrared"), nowEpochSeconds = now)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            QrBootstrap.createInvitation("Phone", setOf("wifi_direct"), wifiSsid = "WarPair", nowEpochSeconds = now)
         }
     }
 
