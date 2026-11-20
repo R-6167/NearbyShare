@@ -226,7 +226,7 @@ object LanLink {
                 sendOne(session, input, output, peer, pin, f, i + 1, files.size, control, onProgress, onFileCompleted)
             }
             control.check()
-            val batchId = "batch-${UUID.randomUUID()}"
+            val batchId = TransferBatchIdentity.from(files)
             sendSealed(session, output, NearbyCore.encodeBatchComplete(batchId, reports.size))
             val allAccepted = reports.all { it.startsWith("OK ") }
             val status = if (allAccepted) "BATCH OK" else "BATCH FINISHED WITH ISSUES"
