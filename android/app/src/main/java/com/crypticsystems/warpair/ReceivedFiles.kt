@@ -102,8 +102,8 @@ object ReceivedFiles {
         val bytes = values["bytes"]?.toLongOrNull() ?: return null
         val nextSeq = values["nextSeq"]?.toLongOrNull() ?: return null
         if (bytes != partial.length() || bytes !in 1 until expectedSize) return null
-        if (bytes % TransferRecoveryState.TransferRecoveryState.DEFAULT_CHUNK_SIZE != 0L ||
-            nextSeq != bytes / TransferRecoveryState.TransferRecoveryState.DEFAULT_CHUNK_SIZE
+        if (bytes % TransferFileCheckpoint.DEFAULT_CHUNK_SIZE != 0L ||
+            nextSeq != bytes / TransferFileCheckpoint.DEFAULT_CHUNK_SIZE
         ) return null
         return PartialInfo(safe, expectedSize, bytes, nextSeq, partial, sessionId)
     }
