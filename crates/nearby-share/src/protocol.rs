@@ -149,6 +149,12 @@ pub enum Message {
         session_id: String,
         reason: Option<String>,
     },
+
+    /// Sender confirms that every offered file has reached a terminal result.
+    BatchComplete {
+        session_id: String,
+        file_count: u32,
+    },
 }
 
 /// Errors from the binary codec.
@@ -387,6 +393,7 @@ const TAG_CHUNK: u8 = 5;
 const TAG_PROGRESS: u8 = 6;
 const TAG_COMPLETE: u8 = 7;
 const TAG_CANCEL: u8 = 8;
+const TAG_BATCH_COMPLETE: u8 = 9;
 
 impl Message {
     /// Encode this message to the binary wire format.
@@ -482,6 +489,11 @@ impl Message {
                 w.str(session_id);
                 w.opt_str(reason);
             }
+            Message::BatchComplete { session_id, file_count } => {
+                w.u8(TAG_BATCH_COMPLETE);
+                w.str(session_id);
+                w.u32(*file_count);
+            }
         }
         w.into_vec()
     }
@@ -561,6 +573,10 @@ impl Message {
             TAG_CANCEL => Ok(Message::Cancel {
                 session_id: r.str()?,
                 reason: r.opt_str()?,
+            }),
+            TAG_BATCH_COMPLETE => Ok(Message::BatchComplete {
+                session_id: r.str()?,
+                file_count: r.u32()?,
             }),
             other => Err(CodecError::UnknownTag(other)),
         }
@@ -646,6 +662,10 @@ mod tests {
         roundtrip(Message::Cancel {
             session_id: "s1".into(),
             reason: Some("user".into()),
+        });
+        roundtrip(Message::BatchComplete {
+            session_id: "batch-1".into(),
+            file_count: 3,
         });
     }
 
