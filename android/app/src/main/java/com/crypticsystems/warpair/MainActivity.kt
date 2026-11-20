@@ -430,8 +430,9 @@ class MainActivity : AppCompatActivity() {
                         adapter.stopDiscovery()
                         acceptors += BluetoothReceiverAcceptor(adapter)
                     }
-                    receiver = MultiTransportReceiver(acceptors)
-                    activeReceiver.set(receiver)
+                    val active = MultiTransportReceiver(acceptors)
+                    receiver = active
+                    activeReceiver.set(active)
                     mainHandler.post {
                         status.text = if (bluetoothAdapter != null) {
                             "Waiting for a peer over Wi-Fi / LAN / SoftAP or Bluetooth…"
@@ -439,7 +440,7 @@ class MainActivity : AppCompatActivity() {
                             "Waiting for a peer over Wi-Fi / LAN / SoftAP… (Bluetooth permission unavailable)"
                         }
                     }
-                    val connection = receiver.accept(control)
+                    val connection = active.accept(control)
                     LanLink.hostConnected(
                         connection = connection,
                         deviceName = name,
