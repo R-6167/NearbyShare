@@ -47,6 +47,7 @@ object WifiDirectTransferController {
         onProgress: LanLink.Progress? = null,
         onPinConfirm: LanLink.PinConfirm,
         statusCallback: (String) -> Unit = {},
+        onFileCompleted: ((LanLink.OutgoingFile) -> Unit)? = null,
     ): String {
         val connection = awaitGroup(adapter, statusCallback) {
             adapter.connect(peerAddress)
@@ -65,6 +66,7 @@ object WifiDirectTransferController {
             control = control,
             onProgress = onProgress,
             onPinConfirm = onPinConfirm,
+            onFileCompleted = onFileCompleted,
         )
     }
 
