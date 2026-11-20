@@ -36,6 +36,8 @@ class MainActivity : AppCompatActivity() {
     private var pickedFiles: List<PickedFile> = emptyList()
     private var scanAfterFilePick = false
     @Volatile private var activeInvitationUri: String? = null
+    @Volatile private var pendingQrPeerName: String? = null
+    @Volatile private var pendingQrAutoJoin = false
     private var lastPeers: List<NsdNearby.Peer> = emptyList()
     private lateinit var nsd: NsdNearby
     private var softAp: SoftApLink? = null
@@ -186,6 +188,17 @@ class MainActivity : AppCompatActivity() {
                         if (peers.isEmpty()) listOf("(No Wi-Fi Direct peers found yet)")
                         else peers.map { "${it.name.ifBlank { "WarPair device" }}  ${it.address}" })
                     if (selectedWifiDirectPeer != null && peers.none { it.address == selectedWifiDirectPeer?.address }) selectedWifiDirectPeer = null
+                    val expected = pendingQrPeerName
+                    val match = if (expected == null) null else peers.firstOrNull { it.name.equals(expected, ignoreCase = true) }
+                    if (match != null && pendingQrAutoJoin) {
+                        pendingQrAutoJoin = false
+                        pendingQrPeerName = null
+                        selectedWifiDirectPeer = match
+                        mainHandler.post {
+                            status.text = "Found ${match.name} from the QR invitation. Connecting…"
+                            findViewById<Button>(R.id.wifiDirectJoinButton).performClick()
+                        }
+                    }
                 }
                 override fun onStatus(message: String) { mainHandler.post { status.text = message } }
             })
@@ -510,6 +523,12 @@ class MainActivity : AppCompatActivity() {
                 status.text = "Enter a valid listening port (1–65535)."
                 return@setOnClickListener
             }
+            try {
+                val bt = getBluetoothLink()
+                if (bt.isSupported() && bt.isEnabled()) {
+                    startActivity(Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300))
+                }
+            } catch (_: Throwable) { /* LAN and Wi-Fi Direct remain available without Bluetooth. */ }
             val control = LanLink.TransferControl()
             val activeReceiver = AtomicReference<MultiTransportReceiver?>(null)
             runBg(
@@ -686,8 +705,36 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyScannedQr(raw: String) {
         try {
-            val payload = QrBootstrap.parseUri(raw)
             findViewById<EditText>(R.id.qrPayloadInput).setText(raw)
+            if (raw.trim().startsWith("warpair://invite?", ignoreCase = true)) {
+                val invitation = QrBootstrap.parseInvitation(raw)
+                pendingQrPeerName = invitation.deviceName
+                pendingQrAutoJoin = pickedFiles.isNotEmpty()
+                val lan = invitation.lanEndpoints.firstOrNull()
+                if (lan != null) {
+                    findViewById<EditText>(R.id.hostInput).setText(lan.host)
+                    findViewById<EditText>(R.id.portInput).setText(lan.port.toString())
+                    findViewById<TextView>(R.id.statusText).text =
+                        "Invitation from ${invitation.deviceName}. Connecting over the available local route…"
+                    if (pickedFiles.isNotEmpty()) findViewById<Button>(R.id.joinButton).performClick()
+                    else findViewById<TextView>(R.id.statusText).append("\\nChoose files, then tap Send.")
+                    return
+                }
+                if ("wifi_direct" in invitation.routes && ensureWifiDirectPermission()) {
+                    findViewById<TextView>(R.id.statusText).text =
+                        "QR found ${invitation.deviceName}. Finding its Wi-Fi Direct route…"
+                    wifiDirect?.discoverPeers()
+                } else if ("bluetooth" in invitation.routes && ensureBluetoothPermissions()) {
+                    findViewById<TextView>(R.id.statusText).text =
+                        "QR found ${invitation.deviceName}. Finding its Bluetooth route…"
+                    startBluetoothDiscovery(invitation.deviceName, autoConnect = pickedFiles.isNotEmpty())
+                } else {
+                    findViewById<TextView>(R.id.statusText).text =
+                        "This invitation has no currently usable route. Ask the receiver to refresh its QR."
+                }
+                return
+            }
+            val payload = QrBootstrap.parseUri(raw)
             findViewById<EditText>(R.id.hostInput).setText(payload.host)
             findViewById<EditText>(R.id.portInput).setText(payload.port.toString())
             findViewById<TextView>(R.id.statusText).text = buildString {
@@ -697,11 +744,8 @@ class MainActivity : AppCompatActivity() {
                 payload.ssid?.let { appendLine("Wi‑Fi: $it — join this network before connecting.") }
                 append("Connection details loaded.")
             }
-            if (pickedFiles.isNotEmpty()) {
-                findViewById<Button>(R.id.joinButton).performClick()
-            } else {
-                findViewById<TextView>(R.id.statusText).append("\nChoose files, then tap Send.")
-            }
+            if (pickedFiles.isNotEmpty()) findViewById<Button>(R.id.joinButton).performClick()
+            else findViewById<TextView>(R.id.statusText).append("\\nChoose files, then tap Send.")
         } catch (t: Throwable) {
             findViewById<TextView>(R.id.statusText).text =
                 "This QR code is not a valid WarPair connection code: ${t.message}"
@@ -828,8 +872,9 @@ class MainActivity : AppCompatActivity() {
         return true
     }
 
-    private fun startBluetoothDiscovery() {
+    private fun startBluetoothDiscovery(expectedPeerName: String? = null, autoConnect: Boolean = false) {
         val status = findViewById<TextView>(R.id.statusText)
+        val autoJoinTriggered = AtomicBoolean(false)
         val list = findViewById<ListView>(R.id.bluetoothPeersList)
         val adapter = try { getBluetoothLink() } catch (error: Throwable) {
             status.text = "Bluetooth unavailable: ${error.message}"
@@ -856,6 +901,12 @@ class MainActivity : AppCompatActivity() {
                     )
                     if (selectedBluetoothPeer != null && peers.none { it.address == selectedBluetoothPeer?.address }) {
                         selectedBluetoothPeer = null
+                    }
+                    val match = expectedPeerName?.let { expected -> peers.firstOrNull { it.name.equals(expected, ignoreCase = true) } }
+                    if (match != null && autoConnect && autoJoinTriggered.compareAndSet(false, true)) {
+                        selectedBluetoothPeer = match
+                        findViewById<TextView>(R.id.statusText).text = "Found ${match.name} from the QR invitation. Connecting…"
+                        findViewById<Button>(R.id.bluetoothJoinButton).performClick()
                     }
                 }
             }
