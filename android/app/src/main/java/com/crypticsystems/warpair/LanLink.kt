@@ -36,7 +36,13 @@ object LanLink {
     fun interface Progress { fun onProgress(bytesDone: Long, totalBytes: Long, phase: String) }
     fun interface PinConfirm { fun confirm(peerName: String, pin: String): Boolean }
 
-    data class OutgoingFile(val fileName: String, val size: Long, val openStream: () -> InputStream)
+    data class OutgoingFile(
+        val fileName: String,
+        val size: Long,
+        val openStream: () -> InputStream,
+        /** Stable for this selected file across transport retries within one logical send. */
+        val sessionId: String = "xfer-${UUID.randomUUID()}",
+    )
 
     data class OfferRequest(
         val peerName: String, val pin: String, val sessionId: String, val fileName: String,
@@ -217,7 +223,7 @@ object LanLink {
         peer: String, pin: String, file: OutgoingFile, index: Int, total: Int,
         control: TransferControl, onProgress: Progress?,
     ): String {
-        val sessionId = "xfer-${UUID.randomUUID().toString().take(8)}"
+        val sessionId = file.sessionId.also { require(it.isNotBlank()) { "file session id is required" } }
         require(file.size == -1L || file.size in 0..MAX_BYTES) {
             "file size is invalid or exceeds $MAX_BYTES bytes"
         }
@@ -274,7 +280,7 @@ object LanLink {
             return "REJECTED ${offer.fileName}: invalid file size"
         }
         val category = ReceivedFiles.categoryFor(offer.fileName)
-        val partial = ReceivedFiles.findPartial(offer.fileName, offer.size)
+        val partial = ReceivedFiles.findPartial(offer.fileName, offer.size, offer.sessionId)
         val result = onOffer.decide(
             OfferRequest(peer, pin, offer.sessionId, offer.fileName, offer.size, category, index, partial),
         )
@@ -294,7 +300,7 @@ object LanLink {
         }
         val reason = if (resume != null) "resume_bytes:${resume.bytesReceived}" else null
         sendSealed(session, output, NearbyCore.encodeResponse(offer.sessionId, true, reason))
-        val sink = ReceivedFiles.openIncoming(offer.fileName, resume)
+        val sink = ReceivedFiles.openIncoming(offer.fileName, resume, offer.sessionId)
         val hasher = NearbyCore.newHasher()
         var discardPartialOnFailure = false
         val validator = TransferIntegrityValidator(
