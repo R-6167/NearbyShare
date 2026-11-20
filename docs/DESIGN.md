@@ -30,7 +30,7 @@ See also [WARPAIR.md](WARPAIR.md) for packaging and SoftAP / QR notes.
 
 ## Protocol sketch
 
-Hello → PIN confirm → Offer (stable transfer identity) → Response (optional `resume_bytes`) → Chunk* → Complete / Cancel.
+Protocol v2: Hello → PIN confirm → Offer (stable transfer identity) → Response (optional `resume_bytes`) → Chunk* → per-file Complete / Cancel → BatchComplete. The sender emits `BatchComplete` only after all offered files reach a terminal result; the receiver rejects a missing marker, a mismatched file count, or a batch that ends via socket close. Older protocol-v1 peers are rejected during the authenticated handshake rather than being allowed to report ambiguous batch success.
 
 A transport reconnect creates a fresh authenticated channel and PIN handshake. It must not silently reset the file checkpoint. The receiver validates the partial file, expected size, sequence boundary and final BLAKE3 checksum before committing the completed file.
 
@@ -45,7 +45,7 @@ A transport reconnect creates a fresh authenticated channel and PIN handshake. I
 
 ## Implementation status
 
-- Implemented: crypto, session, codec, Android LAN TCP, SoftAP + QR bootstrap, mDNS discovery, chunk integrity, partial-file resume.
+- Implemented: crypto, session, codec, Android LAN TCP, SoftAP + QR bootstrap, mDNS discovery, chunk integrity, partial-file resume, and explicit protocol-v2 batch completion.
 - Added in Phase 3 foundation: transport ordering policy, immutable transfer recovery snapshots and deterministic failover sequence with unit tests.
 - Added in this phase: a tested transport-failover coordinator that carries forward only validated durable checkpoints, prevents transfer identity/file-list changes, and stops rather than switching routes when the user cancels. Android transport connection adapters and live transfer callbacks are not yet wired into this coordinator; end-to-end automatic switching remains the next integration step.
 - Implemented: native Wi-Fi Direct adapter and secure Bluetooth Classic RFCOMM socket adapter for already-paired devices. Bluetooth peer discovery and host/join controls are now wired into the Android UI; Android system pairing is used when a selected device is not already bonded. The transport-independent recovery coordinator is implemented; Android end-to-end automatic failover across radios remains pending.
