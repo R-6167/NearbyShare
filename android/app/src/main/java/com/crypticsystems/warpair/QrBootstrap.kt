@@ -44,6 +44,7 @@ object QrBootstrap {
         val routes: Set<String>,
         val lanEndpoints: List<Endpoint>,
         val bluetoothServiceUuid: String? = null,
+        val bluetoothDeviceName: String? = null,
     ) {
         fun isExpired(nowEpochSeconds: Long = System.currentTimeMillis() / 1000L): Boolean =
             expiresAtEpochSeconds <= nowEpochSeconds
@@ -54,6 +55,7 @@ object QrBootstrap {
         routes: Set<String>,
         lanEndpoints: List<Endpoint> = emptyList(),
         bluetoothServiceUuid: String? = null,
+        bluetoothDeviceName: String? = null,
         nowEpochSeconds: Long = System.currentTimeMillis() / 1000L,
         ttlSeconds: Long = DEFAULT_INVITATION_TTL_SECONDS,
     ): Invitation {
@@ -64,8 +66,8 @@ object QrBootstrap {
         require(("lan" in cleanRoutes) == lanEndpoints.isNotEmpty()) {
             "LAN route must have at least one reachable IPv4 endpoint."
         }
-        require("bluetooth" !in cleanRoutes || !bluetoothServiceUuid.isNullOrBlank()) {
-            "Bluetooth route requires its WarPair service UUID."
+        require("bluetooth" !in cleanRoutes || (!bluetoothServiceUuid.isNullOrBlank() && !bluetoothDeviceName.isNullOrBlank())) {
+            "Bluetooth route requires its WarPair service UUID and discoverable device name."
         }
         require(lanEndpoints.size <= MAX_LAN_ENDPOINTS)
         val random = ByteArray(16).also(secureRandom::nextBytes)
@@ -78,6 +80,7 @@ object QrBootstrap {
             routes = cleanRoutes,
             lanEndpoints = lanEndpoints.distinct(),
             bluetoothServiceUuid = bluetoothServiceUuid,
+            bluetoothDeviceName = bluetoothDeviceName?.trim()?.take(64),
         )
     }
 
@@ -93,6 +96,7 @@ object QrBootstrap {
                 append("&lan=").append(enc(invitation.lanEndpoints.joinToString(",") { "${it.host}:${it.port}" }))
             }
             invitation.bluetoothServiceUuid?.let { append("&bt=").append(enc(it)) }
+            invitation.bluetoothDeviceName?.let { append("&btname=").append(enc(it)) }
         }
         return "warpair://invite?$query"
     }
@@ -124,6 +128,7 @@ object QrBootstrap {
             routes = routes,
             lanEndpoints = endpoints,
             bluetoothServiceUuid = map["bt"]?.takeIf { it.isNotBlank() },
+            bluetoothDeviceName = map["btname"]?.takeIf { it.isNotBlank() },
         )
         validateInvitation(invitation, nowEpochSeconds, checkExpiry = true)
         return invitation
@@ -195,7 +200,7 @@ object QrBootstrap {
         require(("lan" in invitation.routes) == invitation.lanEndpoints.isNotEmpty()) {
             "Invitation LAN route information is incomplete."
         }
-        require("bluetooth" !in invitation.routes || !invitation.bluetoothServiceUuid.isNullOrBlank()) {
+        require("bluetooth" !in invitation.routes || (!invitation.bluetoothServiceUuid.isNullOrBlank() && !invitation.bluetoothDeviceName.isNullOrBlank())) {
             "Invitation Bluetooth route information is incomplete."
         }
         require(invitation.expiresAtEpochSeconds > now || !checkExpiry) { "This WarPair invitation has expired. Ask the receiver for a new QR code." }
