@@ -47,13 +47,13 @@ class MultiTransportReceiver(
         val completion: CompletionService<Accepted> = ExecutorCompletionService(executor)
         val futures = mutableListOf<Future<Accepted>>()
         acceptors.forEach { acceptor ->
-            futures += completion.submit<Accepted> {
+            futures += completion.submit(java.util.concurrent.Callable {
                 try {
                     Accepted(acceptor, acceptor.accept(), null)
                 } catch (failure: Throwable) {
                     Accepted(acceptor, null, failure)
                 }
-            }
+            })
         }
 
         val failures = mutableListOf<String>()
