@@ -95,10 +95,14 @@ object ReceivedFiles {
         val partial = partialFile(dir, safe, sessionId)
         val meta = File(dir, "${partial.name}.meta")
         if (!partial.isFile || partial.length() <= 0 || !meta.isFile) return null
-        val values = meta.readLines().mapNotNull { line ->
-            val split = line.indexOf('=')
-            if (split <= 0) null else line.substring(0, split) to line.substring(split + 1)
-        }.toMap()
+        val values = try {
+            meta.readLines().mapNotNull { line ->
+                val split = line.indexOf('=')
+                if (split <= 0) null else line.substring(0, split) to line.substring(split + 1)
+            }.toMap()
+        } catch (_: Exception) {
+            return null
+        }
         if (values["sessionKey"] != partialToken(sessionId)) return null
         if (values["expectedSize"]?.toLongOrNull() != expectedSize) return null
         val bytes = values["bytes"]?.toLongOrNull() ?: return null
@@ -136,7 +140,8 @@ object ReceivedFiles {
         if (completed.canonicalFile.parentFile != dir.canonicalFile) return null
         if (!completed.isFile || completed.length() != expectedSize) return null
         val expectedHash = values["blake3"] ?: return null
-        if (hashFile(completed) != expectedHash) return null
+        val actualHash = try { hashFile(completed) } catch (_: Exception) { return null }
+        if (actualHash != expectedHash) return null
         return SaveResult(completed.absolutePath, category, completed.name, expectedSize)
     }
 
