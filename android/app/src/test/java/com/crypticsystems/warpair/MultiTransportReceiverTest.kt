@@ -32,7 +32,6 @@ class MultiTransportReceiverTest {
     @Test
     fun firstAcceptedTransportWinsAndLosersAreCancelled() {
         val bothStarted = CountDownLatch(2)
-        val waiting = CountDownLatch(1)
         val expected = TestConnection()
         val bluetooth = FakeAcceptor("BLUETOOTH") {
             bothStarted.countDown()
@@ -41,8 +40,7 @@ class MultiTransportReceiverTest {
         }
         val lan = FakeAcceptor("WIFI_LAN") {
             bothStarted.countDown()
-            waiting.await()
-            throw IOException("listener cancelled")
+            throw IOException("listener unavailable")
         }
         val receiver = MultiTransportReceiver(listOf(bluetooth, lan))
         val actual = receiver.accept(LanLink.TransferControl())
