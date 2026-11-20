@@ -120,6 +120,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val wifiSettingsLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        if (pendingQrAutoJoin && pickedFiles.isNotEmpty()) {
+            pendingQrAutoJoin = false
+            findViewById<Button>(R.id.joinButton).performClick()
+        }
+    }
+
     private val scanQrLauncher = registerForActivityResult(ScanContract()) { result ->
         val scanned = result.contents
         if (scanned.isNullOrBlank()) {
@@ -719,10 +728,26 @@ class MainActivity : AppCompatActivity() {
                 if (lan != null) {
                     findViewById<EditText>(R.id.hostInput).setText(lan.host)
                     findViewById<EditText>(R.id.portInput).setText(lan.port.toString())
-                    findViewById<TextView>(R.id.statusText).text =
-                        "Invitation from ${invitation.deviceName}. Connecting over the available local route…"
-                    if (pickedFiles.isNotEmpty()) findViewById<Button>(R.id.joinButton).performClick()
-                    else findViewById<TextView>(R.id.statusText).append("\\nChoose files, then tap Send.")
+                    if (!invitation.wifiSsid.isNullOrBlank() && !invitation.wifiPassword.isNullOrBlank()) {
+                        pendingQrAutoJoin = pickedFiles.isNotEmpty()
+                        AlertDialog.Builder(this)
+                            .setTitle("Join receiver Wi-Fi")
+                            .setMessage("Network: ${invitation.wifiSsid}\\nPassword: ${invitation.wifiPassword}\\n\\nAndroid will ask you to join this temporary network. Return to WarPair when connected.")
+                            .setPositiveButton("Open Wi-Fi settings") { _, _ ->
+                                val settingsIntent = if (Build.VERSION.SDK_INT >= 29) {
+                                    Intent(Settings.Panel.ACTION_WIFI)
+                                } else Intent(Settings.ACTION_WIFI_SETTINGS)
+                                wifiSettingsLauncher.launch(settingsIntent)
+                            }
+                            .setNegativeButton("Not now", null)
+                            .show()
+                        findViewById<TextView>(R.id.statusText).text = "Invitation from ${invitation.deviceName}. Join its temporary Wi-Fi network to continue."
+                    } else {
+                        findViewById<TextView>(R.id.statusText).text =
+                            "Invitation from ${invitation.deviceName}. Connecting over the available local route…"
+                        if (pickedFiles.isNotEmpty()) findViewById<Button>(R.id.joinButton).performClick()
+                        else findViewById<TextView>(R.id.statusText).append("\\nChoose files, then tap Send.")
+                    }
                     return
                 }
                 if ("wifi_direct" in invitation.routes && ensureWifiDirectPermission()) {
