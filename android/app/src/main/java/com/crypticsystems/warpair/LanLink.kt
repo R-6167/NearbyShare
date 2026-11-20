@@ -31,7 +31,7 @@ object LanLink {
         fun check() { if (cancelled.get()) throw TransferCancelledException() }
     }
 
-    class TransferCancelledException : RuntimeException("transfer cancelled")
+    class TransferCancelledException : java.util.concurrent.CancellationException("transfer cancelled")
 
     fun interface Progress { fun onProgress(bytesDone: Long, totalBytes: Long, phase: String) }
     fun interface PinConfirm { fun confirm(peerName: String, pin: String): Boolean }
