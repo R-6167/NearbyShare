@@ -44,6 +44,10 @@ Working name: **Signal / Orbit**. A compact, dark-or-light adaptive interface wi
 
 QR is a rendezvous/bootstrap mechanism, not a magic radio switch and not the data channel.
 
+The first implementation is version 2: `warpair://invite` carries a random 128-bit invitation ID, a five-minute expiry, the receiver's display name, supported route hints, up to four IPv4 LAN endpoints, and (when available) the RFCOMM service UUID plus the current Android Bluetooth device name. Temporary SoftAP SSID/password may be included so the sender can open Android's Wi-Fi settings and join the receiver hotspot. The invitation ID is only a rendezvous label; the existing WarPair PIN confirmation remains the authentication step. The original `warpair://connect` format remains readable for older QR codes.
+
+The receiver displays the invitation once its listeners and route adapters are prepared. Scanning a v2 invitation currently connects directly over a LAN endpoint, or starts peer-name discovery for Wi-Fi Direct / Bluetooth when there is no ordinary LAN endpoint. Wi-Fi Direct P2P interface addresses are deliberately excluded from the LAN endpoint list: Android peer discovery/group negotiation must happen first. SoftAP joining still requires the user to confirm the Android Wi-Fi settings flow.
+
 - Versioned, short-lived invitation with a cryptographically random session ID/nonce, expiry, display name and supported protocol version.
 - Advertise only route hints the receiver has actually started and can currently accept.
 - Never put file contents, private keys, long-lived credentials or a permanent Bluetooth identity in the QR.
