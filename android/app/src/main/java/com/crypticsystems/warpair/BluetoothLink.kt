@@ -208,6 +208,13 @@ class BluetoothLink(context: Context) : AutoCloseable {
         }
     }
 
+    /** Stop a pending RFCOMM accept without closing a socket already handed to LanLink. */
+    fun cancelAccept() {
+        val listening = server
+        server = null
+        try { listening?.close() } catch (_: Throwable) {}
+    }
+
     private fun ensureSupported() {
         check(adapter != null) { "This device does not support Bluetooth." }
     }
