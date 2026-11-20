@@ -64,6 +64,9 @@ data class TransferRecoveryState(
         val knownIds = files.map { it.id }.toSet()
         require(checkpoints.keys.all { it in knownIds }) { "checkpoint references an unknown file" }
         require(completedFileIds.all { it in knownIds }) { "completion references an unknown file" }
+        require(checkpoints.keys.none { it in completedFileIds }) {
+            "completed files cannot retain partial checkpoints"
+        }
         checkpoints.forEach { (id, checkpoint) ->
             require(checkpoint.fileId == id) { "checkpoint file id mismatch" }
             val file = files.first { it.id == id }
@@ -77,6 +80,14 @@ data class TransferRecoveryState(
             "checkpoint size mismatch"
         }
         require(checkpoint.fileId !in completedFileIds) { "completed files cannot be resumed" }
+        val previous = checkpoints[checkpoint.fileId]
+        if (previous != null) {
+            require(checkpoint.sizeBytes == previous.sizeBytes) { "checkpoint size cannot change" }
+            require(checkpoint.chunkSizeBytes == previous.chunkSizeBytes) { "checkpoint chunk size cannot change" }
+            require(checkpoint.bytesDurable >= previous.bytesDurable) {
+                "durable checkpoint cannot move backwards"
+            }
+        }
         return copy(checkpoints = checkpoints + (checkpoint.fileId to checkpoint))
     }
 

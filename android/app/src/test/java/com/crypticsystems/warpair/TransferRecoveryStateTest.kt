@@ -74,4 +74,34 @@ class TransferRecoveryStateTest {
             completed.recordCheckpoint(TransferFileCheckpoint("f1", 200_000, 65_536, 1))
         }
     }
+
+    @Test
+    fun rejectsCheckpointRegressionAndChunkSizeChanges() {
+        val checkpointed = initial().recordCheckpoint(
+            TransferFileCheckpoint("f1", 200_000, 131_072, 2),
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            checkpointed.recordCheckpoint(TransferFileCheckpoint("f1", 200_000, 65_536, 1))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            checkpointed.recordCheckpoint(
+                TransferFileCheckpoint("f1", 200_000, 196_608, 3, chunkSizeBytes = 32 * 1024),
+            )
+        }
+    }
+
+    @Test
+    fun rejectsStateContainingCheckpointForCompletedFile() {
+        assertThrows(IllegalArgumentException::class.java) {
+            TransferRecoveryState(
+                transferId = "inconsistent",
+                files = listOf(TransferFileDescriptor("f1", "video.mp4", 200_000)),
+                checkpoints = mapOf(
+                    "f1" to TransferFileCheckpoint("f1", 200_000, 65_536, 1),
+                ),
+                completedFileIds = setOf("f1"),
+            )
+        }
+    }
+
 }
