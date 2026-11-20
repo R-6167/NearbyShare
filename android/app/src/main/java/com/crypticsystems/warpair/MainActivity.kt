@@ -300,7 +300,7 @@ class MainActivity : AppCompatActivity() {
                 cancelButton, status, control, cancelTransport = { adapter.close() },
             ) {
                 try {
-                    status.text = "Waiting for a nearby Bluetooth device…"
+                    mainHandler.post { status.text = "Waiting for a nearby Bluetooth device…" }
                     val connection = adapter.acceptPeer()
                     LanLink.hostConnected(
                         connection = connection,
@@ -589,6 +589,7 @@ class MainActivity : AppCompatActivity() {
             val required = arrayOf(
                 Manifest.permission.BLUETOOTH_SCAN,
                 Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.BLUETOOTH_ADVERTISE,
             )
             val missing = required.filter {
                 ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
