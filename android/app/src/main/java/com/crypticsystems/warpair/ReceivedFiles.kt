@@ -126,10 +126,14 @@ object ReceivedFiles {
         val token = partialToken(sessionId)
         val meta = File(dir, ".warpair-$token.complete")
         if (!meta.isFile) return null
-        val values = meta.readLines().mapNotNull { line ->
-            val split = line.indexOf('=')
-            if (split <= 0) null else line.substring(0, split) to line.substring(split + 1)
-        }.toMap()
+        val values = try {
+            meta.readLines().mapNotNull { line ->
+                val split = line.indexOf('=')
+                if (split <= 0) null else line.substring(0, split) to line.substring(split + 1)
+            }.toMap()
+        } catch (_: Exception) {
+            return null
+        }
         if (values["sessionKey"] != token) return null
         if (values["expectedSize"]?.toLongOrNull() != expectedSize) return null
         val originalName = decodeManifestName(values["originalName"] ?: return null) ?: return null
