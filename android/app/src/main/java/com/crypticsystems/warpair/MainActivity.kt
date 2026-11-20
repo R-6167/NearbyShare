@@ -403,23 +403,56 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             val control = LanLink.TransferControl()
-            runBg(listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton, softApButton), cancelButton, status, control) {
+            val activeReceiver = AtomicReference<MultiTransportReceiver?>(null)
+            runBg(
+                listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton, softApButton),
+                cancelButton, status, control,
+                cancelTransport = { activeReceiver.get()?.close() },
+            ) {
+                var bluetoothAdapter: BluetoothLink? = null
+                var receiver: MultiTransportReceiver? = null
                 try {
-                    LanLink.hostOnce(
+                    val acceptors = mutableListOf<ReceiverAcceptor>()
+                    acceptors += TcpReceiverAcceptor(listenPort) { boundPort ->
+                        mainHandler.post {
+                            nsd.advertise(name, boundPort)
+                            status.text = "Listening on port $boundPort over Wi-Fi / LAN / SoftAP.\n" +
+                                "This phone's addresses:\n${localIpv4List()}\n" +
+                                "Bluetooth will also accept a peer when its permission is available."
+                        }
+                    }
+                    bluetoothAdapter = try {
+                        getBluetoothLink().takeIf { it.isSupported() && it.isEnabled() }
+                    } catch (_: Throwable) {
+                        null
+                    }
+                    bluetoothAdapter?.let { adapter ->
+                        adapter.stopDiscovery()
+                        acceptors += BluetoothReceiverAcceptor(adapter)
+                    }
+                    val active = MultiTransportReceiver(acceptors)
+                    receiver = active
+                    activeReceiver.set(active)
+                    mainHandler.post {
+                        status.text = if (bluetoothAdapter != null) {
+                            "Waiting for a peer over Wi-Fi / LAN / SoftAP or Bluetooth…"
+                        } else {
+                            "Waiting for a peer over Wi-Fi / LAN / SoftAP… (Bluetooth permission unavailable)"
+                        }
+                    }
+                    val connection = active.accept(control)
+                    LanLink.hostConnected(
+                        connection = connection,
                         deviceName = name,
-                        port = listenPort,
                         control = control,
                         onProgress = progressTo(status),
-                        onListening = { boundPort ->
-                            mainHandler.post {
-                                nsd.advertise(name, boundPort)
-                                status.text = "Waiting for a peer on port $boundPort\n\nThis phone's addresses:\n${localIpv4List()}\n\nBoth phones must use the same Wi‑Fi network."
-                            }
-                        },
                         onPinConfirm = LanLink.PinConfirm { peer, pin -> askPinConfirm(peer, pin) },
                         onOffer = LanLink.OfferDecision { offer -> askAcceptOffer(offer) },
                     )
                 } finally {
+                    receiver?.close()
+                    activeReceiver.set(null)
+                    if (bluetooth === bluetoothAdapter) bluetooth = null
                     mainHandler.post { nsd.stopAdvertising() }
                 }
             }
