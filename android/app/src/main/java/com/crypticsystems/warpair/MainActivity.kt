@@ -754,6 +754,15 @@ class MainActivity : AppCompatActivity() {
                     findViewById<TextView>(R.id.statusText).text =
                         "QR found ${invitation.deviceName}. Finding its Wi-Fi Direct route…"
                     wifiDirect?.discoverPeers()
+                    if ("bluetooth" in invitation.routes && pickedFiles.isNotEmpty() && ensureBluetoothPermissions()) {
+                        mainHandler.postDelayed({
+                            if (pendingQrAutoJoin && pendingQrPeerName != null) {
+                                findViewById<TextView>(R.id.statusText).text =
+                                    "Wi-Fi Direct peer not found yet. Trying the Bluetooth route from the same QR…"
+                                startBluetoothDiscovery(invitation.bluetoothDeviceName ?: invitation.deviceName, autoConnect = true)
+                            }
+                        }, 8_000)
+                    }
                 } else if ("bluetooth" in invitation.routes && ensureBluetoothPermissions()) {
                     findViewById<TextView>(R.id.statusText).text =
                         "QR found ${invitation.deviceName}. Finding its Bluetooth route…"
@@ -938,6 +947,8 @@ class MainActivity : AppCompatActivity() {
                     }
                     val match = expectedPeerName?.let { expected -> peers.firstOrNull { it.name.equals(expected, ignoreCase = true) } }
                     if (match != null && autoConnect && autoJoinTriggered.compareAndSet(false, true)) {
+                        pendingQrAutoJoin = false
+                        pendingQrPeerName = null
                         selectedBluetoothPeer = match
                         findViewById<TextView>(R.id.statusText).text = "Found ${match.name} from the QR invitation. Connecting…"
                         findViewById<Button>(R.id.bluetoothJoinButton).performClick()
