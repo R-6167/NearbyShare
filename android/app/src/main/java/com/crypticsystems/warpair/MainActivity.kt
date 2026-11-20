@@ -756,6 +756,10 @@ class MainActivity : AppCompatActivity() {
     private fun handleWarpairIntent(intent: Intent?) {
         val data = intent?.data?.toString() ?: return
         if (!data.startsWith("warpair://", ignoreCase = true)) return
+        if (data.startsWith("warpair://invite?", ignoreCase = true)) {
+            applyScannedQr(data)
+            return
+        }
         try {
             val p = QrBootstrap.parseUri(data)
             findViewById<EditText>(R.id.qrPayloadInput).setText(data)
