@@ -12,21 +12,42 @@
         android:orientation="vertical"
         android:padding="20dp">
 
-        <TextView
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="WarPair"
-            android:textColor="?attr/colorOnSurface"
-            android:textSize="30sp"
-            android:textStyle="bold" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="Private, direct file sharing between nearby devices"
-            android:textColor="?attr/colorOnSurface"
-            android:textSize="14sp" />
+            <ImageView
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginEnd="12dp"
+                android:contentDescription="WarPair Orbit"
+                android:src="@drawable/ic_orbit" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="WarPair"
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="28sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="Move files. Not through hoops."
+                    android:textColor="?attr/colorOnSurface"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </LinearLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -39,40 +60,84 @@
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/quickSendButton"
                 android:layout_width="0dp"
-                android:layout_height="76dp"
+                android:layout_height="108dp"
                 android:layout_weight="1"
                 android:layout_marginEnd="6dp"
                 android:text="Send"
                 android:textAllCaps="false"
                 android:textSize="16sp"
+                app:cornerRadius="18dp"
+                app:backgroundTint="?attr/colorPrimary"
+                android:textColor="?attr/colorOnPrimary"
+                app:iconTint="?attr/colorOnPrimary"
                 app:icon="@drawable/ic_send"
-                app:iconGravity="textStart"
-                app:iconPadding="10dp" />
+                app:iconGravity="top"
+                app:iconSize="30dp"
+                app:iconPadding="8dp" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/quickReceiveButton"
                 android:layout_width="0dp"
-                android:layout_height="76dp"
+                android:layout_height="108dp"
                 android:layout_weight="1"
                 android:layout_marginStart="6dp"
                 android:text="Receive"
                 android:textAllCaps="false"
                 android:textSize="16sp"
+                app:cornerRadius="18dp"
+                app:backgroundTint="?attr/colorSurface"
+                app:strokeColor="?attr/colorPrimary"
+                app:strokeWidth="1dp"
+                android:textColor="?attr/colorOnSurface"
+                app:iconTint="?attr/colorPrimary"
                 app:icon="@drawable/ic_inbox"
-                app:iconGravity="textStart"
-                app:iconPadding="10dp" />
+                app:iconGravity="top"
+                app:iconSize="30dp"
+                app:iconPadding="8dp" />
         </LinearLayout>
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/quickScanButton"
             android:layout_width="match_parent"
-            android:layout_height="52dp"
-            android:layout_marginTop="8dp"
-            android:text="Scan connection QR"
+            android:layout_height="56dp"
+            android:layout_marginTop="10dp"
+            android:text="Scan to connect"
             android:textAllCaps="false"
             app:icon="@drawable/ic_qr_scan"
             app:iconGravity="textStart"
-            app:iconPadding="10dp" />
+            app:iconSize="24dp"
+            app:iconPadding="12dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/quickFilesButton"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:layout_marginEnd="6dp"
+                android:text="Files"
+                android:textAllCaps="false"
+                app:icon="@drawable/ic_folder"
+                app:iconGravity="textStart"
+                app:iconSize="20dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/quickToolsButton"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_weight="1"
+                android:layout_marginStart="6dp"
+                android:text="More tools"
+                android:textAllCaps="false"
+                app:icon="@drawable/ic_tune"
+                app:iconGravity="textStart"
+                app:iconSize="20dp" />
+        </LinearLayout>
 
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
@@ -102,7 +167,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="Ready. Start Host on one phone, then connect from the other."
+                    android:text="Ready when you are. Choose Send or Receive to begin."
                     android:textColor="?attr/colorOnSurface"
                     android:textIsSelectable="true"
                     android:textSize="14sp" />
@@ -118,15 +183,19 @@
         </com.google.android.material.card.MaterialCardView>
 
         <TextView
+            android:id="@+id/advancedPairingHeading"
+            android:visibility="gone"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="22dp"
-            android:text="1. Pair devices"
+            android:text="Connection tools"
             android:textColor="?attr/colorOnSurface"
             android:textSize="19sp"
             android:textStyle="bold" />
 
         <com.google.android.material.card.MaterialCardView
+            android:id="@+id/advancedPairingCard"
+            android:visibility="gone"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
@@ -296,15 +365,19 @@
         </com.google.android.material.card.MaterialCardView>
 
         <TextView
+            android:id="@+id/advancedTransferHeading"
+            android:visibility="gone"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="22dp"
-            android:text="2. Send or receive"
+            android:text="Manual transfer controls"
             android:textColor="?attr/colorOnSurface"
             android:textSize="19sp"
             android:textStyle="bold" />
 
         <com.google.android.material.card.MaterialCardView
+            android:id="@+id/advancedTransferCard"
+            android:visibility="gone"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
@@ -376,6 +449,7 @@
 
         <Button
             android:id="@+id/smokeButton"
+            android:visibility="gone"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
