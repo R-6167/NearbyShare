@@ -49,9 +49,9 @@ class MainActivity : AppCompatActivity() {
     private var wifiDirect: WifiDirectLink? = null
     private var bluetooth: BluetoothLink? = null
     private var bluetoothPeers: List<BluetoothLink.Peer> = emptyList()
-    private var selectedBluetoothPeer: BluetoothLink.Peer? = null
+    @Volatile private var selectedBluetoothPeer: BluetoothLink.Peer? = null
     private var wifiDirectPeers: List<WifiDirectLink.Peer> = emptyList()
-    private var selectedWifiDirectPeer: WifiDirectLink.Peer? = null
+    @Volatile private var selectedWifiDirectPeer: WifiDirectLink.Peer? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private val activeControl = AtomicReference<LanLink.TransferControl?>(null)
     private val activeTransportCancel = AtomicReference<(() -> Unit)?>(null)
@@ -736,14 +736,12 @@ class MainActivity : AppCompatActivity() {
             }
             val control = LanLink.TransferControl()
             val invitation = pendingQrInvitation
-            val wifiPeer = selectedWifiDirectPeer
-            val btPeer = selectedBluetoothPeer
-            val useWifiDirect = invitation?.routes?.contains("wifi_direct") == true && wifiPeer != null
-            val useBluetooth = invitation?.routes?.contains("bluetooth") == true && btPeer != null && ensureBluetoothPermissions()
-            val btAdapter = if (useBluetooth) getBluetoothLink() else null
+            val useWifiDirect = invitation?.routes?.contains("wifi_direct") == true
+            val useBluetooth = invitation?.routes?.contains("bluetooth") == true
+            val btAdapter = if (useBluetooth && ensureBluetoothPermissions()) getBluetoothLink() else null
             val routes = mutableListOf(TransferTransport.WIFI_LAN)
             if (useWifiDirect) routes += TransferTransport.WIFI_DIRECT
-            if (useBluetooth) routes += TransferTransport.BLUETOOTH
+            if (useBluetooth && btAdapter != null) routes += TransferTransport.BLUETOOTH
             runBg(
                 listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton, softApButton),
                 cancelButton, status, control, cancelTransport = { btAdapter?.close() },
@@ -754,19 +752,34 @@ class MainActivity : AppCompatActivity() {
                         LanLink.connectOnce(host, peerPort, name, files, control, progressTo(status),
                             LanLink.PinConfirm { peer, pin -> askPinConfirm(peer, pin) })
                     }
-                    if (useWifiDirect && wifiPeer != null && wifiDirect != null) {
+                    if (useWifiDirect && wifiDirect != null) {
                         attempts[TransferTransport.WIFI_DIRECT] = {
-                            mainHandler.post { status.text = "LAN failed. Switching to Wi-Fi Direct with the same transfer IDs…" }
-                            WifiDirectTransferController.join(wifiDirect!!, wifiPeer.address, name, files, control,
-                                progressTo(status), LanLink.PinConfirm { peer, pin -> askPinConfirm(peer, pin) },
+                            mainHandler.post { status.text = "LAN failed. Resolving the Wi-Fi Direct peer…" }
+                            val deadline = System.currentTimeMillis() + 10_000L
+                            while (selectedWifiDirectPeer == null && System.currentTimeMillis() < deadline) {
+                                control.check()
+                                Thread.sleep(200)
+                            }
+                            val peer = selectedWifiDirectPeer ?: throw java.io.IOException("Wi-Fi Direct peer was not discovered.")
+                            mainHandler.post { status.text = "Switching to Wi-Fi Direct with the same transfer IDs…" }
+                            WifiDirectTransferController.join(wifiDirect!!, peer.address, name, files, control,
+                                progressTo(status), LanLink.PinConfirm { peerName, pin -> askPinConfirm(peerName, pin) },
                                 statusCallback = { message -> mainHandler.post { status.text = message } },
                                 onFileCompleted = { completed -> mainHandler.post { status.text = "Verified on receiver: ${completed.fileName}" } })
                         }
                     }
-                    if (useBluetooth && btPeer != null && btAdapter != null && btAdapter.isEnabled()) {
+                    if (useBluetooth && btAdapter != null) {
                         attempts[TransferTransport.BLUETOOTH] = {
-                            mainHandler.post { status.text = "LAN / Wi-Fi Direct failed. Switching to Bluetooth with the same transfer IDs…" }
-                            val connection = btAdapter.connect(btPeer.address)
+                            mainHandler.post { status.text = "Resolving the receiver over Bluetooth…" }
+                            val deadline = System.currentTimeMillis() + 10_000L
+                            while (selectedBluetoothPeer == null && System.currentTimeMillis() < deadline) {
+                                control.check()
+                                Thread.sleep(200)
+                            }
+                            val peer = selectedBluetoothPeer ?: throw java.io.IOException("Bluetooth peer was not discovered.")
+                            if (!btAdapter.isEnabled()) throw java.io.IOException("Bluetooth is disabled.")
+                            mainHandler.post { status.text = "Switching to Bluetooth with the same transfer IDs…" }
+                            val connection = btAdapter.connect(peer.address)
                             LanLink.sendConnected(connection, name, files, control, progressTo(status),
                                 LanLink.PinConfirm { peer, pin -> askPinConfirm(peer, pin) },
                                 onFileCompleted = { completed -> mainHandler.post { status.text = "Verified on receiver: ${completed.fileName}" } })
@@ -799,7 +812,7 @@ class MainActivity : AppCompatActivity() {
                 val invitation = QrBootstrap.parseInvitation(raw)
                 pendingQrInvitation = invitation
                 pendingQrPeerName = invitation.bluetoothDeviceName ?: invitation.deviceName
-                pendingQrAutoJoin = pickedFiles.isNotEmpty()
+                pendingQrAutoJoin = pickedFiles.isNotEmpty() && invitation.lanEndpoints.isEmpty()
                 pendingQrHasBluetooth = "bluetooth" in invitation.routes
                 val lan = invitation.lanEndpoints.firstOrNull()
                 if (lan != null) {
