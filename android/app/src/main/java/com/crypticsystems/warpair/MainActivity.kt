@@ -322,9 +322,15 @@ class MainActivity : AppCompatActivity() {
             if (peer == null) { status.text = "Find Bluetooth devices, then select the other phone."; return@setOnClickListener }
             val adapter = getBluetoothLink()
             if (!adapter.isEnabled()) { status.text = "Turn on Bluetooth, then retry."; return@setOnClickListener }
+            val wifiPeer = selectedWifiDirectPeer
+            if (wifiPeer != null && !ensureWifiDirectPermission()) return@setOnClickListener
+            val wifiAdapter = if (wifiPeer != null) wifiDirect else null
             val name = nameInput.text?.toString()?.ifBlank { "WarPair Bluetooth sender" } ?: "WarPair Bluetooth sender"
             val files = buildOutgoingFiles(payloadInput.text?.toString().orEmpty())
             val control = LanLink.TransferControl()
+            val routes = if (wifiPeer != null && wifiAdapter != null) {
+                listOf(TransferTransport.BLUETOOTH, TransferTransport.WIFI_DIRECT)
+            } else listOf(TransferTransport.BLUETOOTH)
             runBg(
                 listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton, softApButton,
                     wifiDirectDiscoverButton, wifiDirectHostButton, wifiDirectJoinButton,
@@ -332,14 +338,39 @@ class MainActivity : AppCompatActivity() {
                 cancelButton, status, control, cancelTransport = { adapter.close() },
             ) {
                 try {
-                    val connection = adapter.connect(peer.address)
-                    LanLink.sendConnected(
-                        connection = connection,
-                        deviceName = name,
-                        files = files,
-                        control = control,
-                        onProgress = progressTo(status),
-                        onPinConfirm = LanLink.PinConfirm { peerName, pin -> askPinConfirm(peerName, pin) },
+                    val attempts = mutableMapOf<TransferTransport, () -> String>()
+                    attempts[TransferTransport.BLUETOOTH] = {
+                        val connection = adapter.connect(peer.address)
+                        LanLink.sendConnected(
+                            connection, name, files, control, progressTo(status),
+                            LanLink.PinConfirm { peerName, pin -> askPinConfirm(peerName, pin) },
+                            onFileCompleted = { completed ->
+                                mainHandler.post { status.text = "Verified on receiver: ${completed.fileName}" }
+                            },
+                        )
+                    }
+                    if (wifiPeer != null && wifiAdapter != null) {
+                        attempts[TransferTransport.WIFI_DIRECT] = {
+                            mainHandler.post { status.text = "Bluetooth failed. Switching to Wi-Fi Direct without changing transfer identity…" }
+                            WifiDirectTransferController.join(
+                                wifiAdapter, wifiPeer.address, name, files, control, progressTo(status),
+                                LanLink.PinConfirm { peerName, pin -> askPinConfirm(peerName, pin) },
+                                statusCallback = { message -> mainHandler.post { status.text = message } },
+                                onFileCompleted = { completed ->
+                                    mainHandler.post { status.text = "Verified on receiver: ${completed.fileName}" }
+                                },
+                            )
+                        }
+                    }
+                    TransferRouteRunner(routes).execute(
+                        attempts, control,
+                        onRouteChanged = { failed, next, reason ->
+                            mainHandler.post {
+                                status.text = if (next != null) {
+                                    "$failed failed ($reason). Trying $next with the same batch and file IDs…"
+                                } else "$failed failed ($reason). No further route is available."
+                            }
+                        },
                     )
                 } finally {
                     adapter.close()
@@ -373,13 +404,61 @@ class MainActivity : AppCompatActivity() {
             val peer = selectedWifiDirectPeer
             if (peer == null) { status.text = "Find Wi-Fi Direct devices, then select the other phone."; return@setOnClickListener }
             val adapter = wifiDirect ?: run { status.text = "Wi-Fi Direct is unavailable on this device."; return@setOnClickListener }
+            val bluetoothPeer = selectedBluetoothPeer
+            if (bluetoothPeer != null && !ensureBluetoothPermissions()) return@setOnClickListener
+            val bluetoothAdapter = if (bluetoothPeer != null) getBluetoothLink() else null
             val name = nameInput.text?.toString()?.ifBlank { "WarPair sender" } ?: "WarPair sender"
             val files = buildOutgoingFiles(payloadInput.text?.toString().orEmpty())
             val control = LanLink.TransferControl()
-            runBg(listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton, softApButton, wifiDirectDiscoverButton, wifiDirectHostButton, wifiDirectJoinButton), cancelButton, status, control) {
-                WifiDirectTransferController.join(adapter, peer.address, name, files, control, progressTo(status),
-                    LanLink.PinConfirm { peerName, pin -> askPinConfirm(peerName, pin) },
-                    statusCallback = { message -> mainHandler.post { status.text = message } })
+            val routes = if (bluetoothPeer != null && bluetoothAdapter?.isEnabled() == true) {
+                listOf(TransferTransport.WIFI_DIRECT, TransferTransport.BLUETOOTH)
+            } else listOf(TransferTransport.WIFI_DIRECT)
+            runBg(
+                listOf(smokeButton, hostButton, joinButton, discoverButton, libraryButton, softApButton,
+                    wifiDirectDiscoverButton, wifiDirectHostButton, wifiDirectJoinButton,
+                    bluetoothDiscoverButton, bluetoothHostButton, bluetoothJoinButton),
+                cancelButton, status, control,
+                cancelTransport = { bluetoothAdapter?.close() },
+            ) {
+                try {
+                    val attempts = mutableMapOf<TransferTransport, () -> String>()
+                    attempts[TransferTransport.WIFI_DIRECT] = {
+                        WifiDirectTransferController.join(
+                            adapter, peer.address, name, files, control, progressTo(status),
+                            LanLink.PinConfirm { peerName, pin -> askPinConfirm(peerName, pin) },
+                            statusCallback = { message -> mainHandler.post { status.text = message } },
+                            onFileCompleted = { completed ->
+                                mainHandler.post { status.text = "Verified on receiver: ${completed.fileName}" }
+                            },
+                        )
+                    }
+                    if (bluetoothPeer != null && bluetoothAdapter?.isEnabled() == true) {
+                        attempts[TransferTransport.BLUETOOTH] = {
+                            mainHandler.post { status.text = "Wi-Fi Direct failed. Switching to Bluetooth without changing transfer identity…" }
+                            val connection = bluetoothAdapter.connect(bluetoothPeer.address)
+                            LanLink.sendConnected(
+                                connection, name, files, control, progressTo(status),
+                                LanLink.PinConfirm { peerName, pin -> askPinConfirm(peerName, pin) },
+                                onFileCompleted = { completed ->
+                                    mainHandler.post { status.text = "Verified on receiver: ${completed.fileName}" }
+                                },
+                            )
+                        }
+                    }
+                    TransferRouteRunner(routes).execute(
+                        attempts, control,
+                        onRouteChanged = { failed, next, reason ->
+                            mainHandler.post {
+                                status.text = if (next != null) {
+                                    "$failed failed ($reason). Trying $next with the same batch and file IDs…"
+                                } else "$failed failed ($reason). No further route is available."
+                            }
+                        },
+                    )
+                } finally {
+                    bluetoothAdapter?.close()
+                    if (bluetooth === bluetoothAdapter) bluetooth = null
+                }
             }
         }
 
