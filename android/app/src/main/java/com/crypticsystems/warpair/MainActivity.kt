@@ -419,8 +419,8 @@ class MainActivity : AppCompatActivity() {
                         acceptors += TcpReceiverAcceptor(listenPort) { boundPort ->
                             mainHandler.post {
                                 nsd.advertise(name, boundPort)
-                                status.text = "Listening on port $boundPort over Wi-Fi / LAN / SoftAP.\\n" +
-                                    "This phone's addresses:\\n${localIpv4List()}\\n" +
+                                status.text = "Listening on port $boundPort over Wi-Fi / LAN / SoftAP.\n" +
+                                    "This phone's addresses:\n${localIpv4List()}\n" +
                                     "Bluetooth will also accept a peer when its permission is available."
                             }
                         }
