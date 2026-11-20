@@ -184,6 +184,17 @@ class BluetoothLink(context: Context) : AutoCloseable {
         } catch (error: SecurityException) {
             throw permissionError("select Bluetooth peer", error)
         }
+        // Android explicitly recommends cancelling discovery before RFCOMM connect.
+        // Discovery keeps the Bluetooth radio busy and can make socket connection stall or
+        // fail even after the peer has been found. This runs on the transfer worker thread.
+        try {
+            adapter!!.cancelDiscovery()
+        } catch (error: SecurityException) {
+            throw permissionError("stop Bluetooth discovery before connecting", error)
+        } catch (error: Throwable) {
+            throw IOException("Could not stop Bluetooth discovery before connecting: ${error.message}", error)
+        }
+
         val socket = try {
             device.createRfcommSocketToServiceRecord(SERVICE_UUID)
         } catch (error: SecurityException) {
