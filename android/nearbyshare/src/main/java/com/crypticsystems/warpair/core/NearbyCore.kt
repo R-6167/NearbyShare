@@ -41,6 +41,10 @@ object NearbyCore {
 
         fun nearby_c_msg_encode_complete(sid: ByteArray, sidLen: Int, hash: ByteArray, out: ByteArray, outLen: Int): Int
 
+        fun nearby_c_msg_encode_batch_start(
+            sid: ByteArray, sidLen: Int, fileCount: Int, out: ByteArray, outLen: Int,
+        ): Int
+
         fun nearby_c_msg_encode_batch_complete(
             sid: ByteArray, sidLen: Int, fileCount: Int, out: ByteArray, outLen: Int,
         ): Int
@@ -73,6 +77,11 @@ object NearbyCore {
         fun nearby_c_msg_parse_complete(
             data: ByteArray, dataLen: Int, sidOut: ByteArray, sidCap: Int, sidLenOut: IntByReference,
             fileIdOut: IntByReference, hashOut: ByteArray,
+        ): Int
+
+        fun nearby_c_msg_parse_batch_start(
+            data: ByteArray, dataLen: Int, sidOut: ByteArray, sidCap: Int,
+            sidLenOut: IntByReference, fileCountOut: IntByReference,
         ): Int
 
         fun nearby_c_msg_parse_batch_complete(
@@ -197,6 +206,13 @@ object NearbyCore {
         return readBytes { o, l -> lib().nearby_c_msg_encode_complete(sid, sid.size, hash32, o, l) }
     }
 
+    fun encodeBatchStart(batchId: String, fileCount: Int): ByteArray {
+        require(batchId.isNotBlank())
+        require(fileCount > 0)
+        val sid = batchId.toByteArray(StandardCharsets.UTF_8)
+        return readBytes { o, l -> lib().nearby_c_msg_encode_batch_start(sid, sid.size, fileCount, o, l) }
+    }
+
     fun encodeBatchComplete(batchId: String, fileCount: Int): ByteArray {
         require(batchId.isNotBlank())
         require(fileCount >= 0)
@@ -296,6 +312,15 @@ object NearbyCore {
     }
 
     data class BatchCompleteInfo(val batchId: String, val fileCount: Int)
+
+    fun parseBatchStart(data: ByteArray): BatchCompleteInfo {
+        val sid = ByteArray(256)
+        val sidLen = IntByReference()
+        val count = IntByReference()
+        val rc = lib().nearby_c_msg_parse_batch_start(data, data.size, sid, sid.size, sidLen, count)
+        if (rc != 0) error("parseBatchStart $rc")
+        return BatchCompleteInfo(String(sid, 0, sidLen.value, StandardCharsets.UTF_8), count.value)
+    }
 
     fun parseBatchComplete(data: ByteArray): BatchCompleteInfo {
         val sid = ByteArray(256)
